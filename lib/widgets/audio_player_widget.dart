@@ -63,7 +63,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   }
 
   Future<bool> _ensureOpen() async {
-    if (_player.isOpen) return true;
+    if (_player.isOpen()) return true;
     if (_opening) return false;
     _opening = true;
     try {
