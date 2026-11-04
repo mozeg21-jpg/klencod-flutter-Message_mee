@@ -152,14 +152,23 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           child: Container(
             width: 34,
             height: 34,
-            decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: const Color(0xFFE85C5C).withOpacity(0.45), width: 1),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 3, offset: const Offset(0, 1))
+              ],
+            ),
             child: _loading
                 ? const Center(
                     child: SizedBox(
-                        width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFE85C5C))))
                 : Icon(
                     _playing ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
+                    color: const Color(0xFFE85C5C),
                     size: 20,
                   ),
           ),
