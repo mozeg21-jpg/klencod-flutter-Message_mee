@@ -5,10 +5,19 @@ plugins {
     id 'com.google.gms.google-services'
 }
 
+// توقيع النسخة الإفراج (Release):
+// لو ملف key.properties موجود (محليًا أو من أسرار GitHub في CI) نستخدم مفتاح التوقيع الرسمي،
+// ولو مش موجود نرجع لتوقيع debug التلقائي → في كل الأحوال الـ APK يطلع موقّعًا
+// فلا يظهر خطأ "الحزمة غير صالحة" عند التثبيت على الموبايل.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace 'com.ahmed.app'
     compileSdk 36
-
     defaultConfig {
         applicationId 'com.ahmed.app'
         minSdk 23
@@ -17,18 +26,26 @@ android {
         versionName '1.0'
         ndkVersion "28.2.13676358"
     }
-
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-
     kotlinOptions {
         jvmTarget = '17'
     }
-
+    signingConfigs {
+        release {
+            if (keystoreProperties['keyAlias'] != null) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
+        }
+    }
     buildTypes {
         release {
+            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

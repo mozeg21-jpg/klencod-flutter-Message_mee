@@ -1,0 +1,18 @@
+# ===== نسخ التوقيع المؤقتة التي يولّدها البناء =====
+# ملاحظة: مجلد android/signing/ مرفوع عمدًا (وضع التوقيع التلقائي)؛
+# الملفات بالأسفل نسخ مؤقتة تُنتج وقت البناء فقط ولا تُرفع.
+android/key.properties
+android/app/release-key.jks
+android/signing-credentials.txt
+
+# ===== Flutter / Dart =====
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.idea/
+*.iml
+ios/Pods/
+android/.gradle/
+android/local.properties

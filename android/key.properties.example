@@ -1,0 +1,5 @@
+# انسخ هذا الملف باسم key.properties واملأ القيم الحقيقية. لا ترفع key.properties على GitHub.
+storePassword=كلمة-مرور-المخزن
+keyPassword=كلمة-مرور-المفتاح
+keyAlias=release
+storeFile=release-key.jks

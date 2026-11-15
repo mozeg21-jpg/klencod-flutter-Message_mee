@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/notification_service.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -19,6 +22,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   final _recorder = FlutterSoundRecorder();
+  final ImagePicker _picker = ImagePicker();
   final List<Map<String, dynamic>> _messages = [];
   StreamSubscription<DatabaseEvent>? _subscription;
   StreamSubscription<RecordingDisposition>? _recordingSubscription;
@@ -32,9 +36,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   OverlayEntry? _toastEntry;
   late final AnimationController _entryController;
   late final AnimationController _pulseController;
-
   static const int _maxLiveLevels = 80;
   static const int _storedWaveBars = 40;
+  // حدود حجم الوسائط (Base64 يزيد الحجم ~33% فلذلك نحافظ على ملفات صغيرة)
+  static const int _maxImageBytes = 4 * 1024 * 1024; // 4 ميجا للصورة
+  static const int _maxVideoBytes = 10 * 1024 * 1024; // 10 ميجا للفيديو
+  static const List<String> kReactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+  final Set<String> _notified = {};
+  bool _initialLoad = true;
 
   @override
   void initState() {
@@ -58,6 +67,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _recorderReady = true;
     } catch (_) {}
     try {
+      await NotificationService.init();
+      await NotificationService.requestPermission();
+    } catch (_) {}
+    try {
       _subscription = FirebaseDatabase.instance.ref('messages').limitToLast(100).onValue.listen(_readMessages);
     } catch (_) {}
     if (mounted) setState(() {});
@@ -75,6 +88,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     });
     list.sort((a, b) => ((a['time'] as num?) ?? 0).compareTo((b['time'] as num?) ?? 0));
+    // أول تحميل: نسجل الرسالة القديمة كلها من غير إشعارات؛ الجديد بعدها بس يُنوّه عنه
+    if (_initialLoad) {
+      _initialLoad = false;
+      for (final m in list) {
+        _notified.add(m['id'].toString());
+      }
+    } else {
+      for (final m in list) {
+        final id = m['id'].toString();
+        if (_notified.contains(id)) continue;
+        _notified.add(id);
+        if (m['senderId'] != _uid) _notifyIncoming(m);
+      }
+    }
     if (mounted) {
       setState(() {
         _messages
@@ -82,6 +109,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ..addAll(list);
       });
     }
+  }
+
+  /// إشعار محلي برسالة واردة (نص/صوت/صورة/فيديو) مع تمييز الردود.
+  Future<void> _notifyIncoming(Map<String, dynamic> m) async {
+    final name = (m['senderName'] ?? 'مستخدم').toString();
+    final reply = m['replyTo'] as Map?;
+    final prefix = reply != null ? 'رد على ${reply['name'] ?? ''}: ' : '';
+    final type = (m['mediaType'] ?? '').toString();
+    String body;
+    if (type == 'image') {
+      body = '${prefix}صورة';
+    } else if (type == 'video') {
+      body = '${prefix}فيديو';
+    } else if ((m['audioBase64'] ?? '').toString().isNotEmpty) {
+      body = '${prefix}تسجيل صوتي';
+    } else {
+      body = '$prefix${(m['text'] ?? '').toString()}';
+    }
+    await NotificationService.show(title: name, body: body, id: m['id'].toString().hashCode);
   }
 
   @override
@@ -104,6 +150,92 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     return s.length > 70 ? '${s.substring(0, 70)}…' : s;
   }
 
+  /// نص معاينة مختصر للرسالة التي يتم الرد عليها (نص/صوت/صورة/فيديو).
+  String _replyPreview(Map<String, dynamic> m) {
+    final type = (m['mediaType'] ?? '').toString();
+    if (type == 'image') return 'صورة';
+    if (type == 'video') return 'فيديو';
+    if ((m['audioBase64'] ?? '').toString().isNotEmpty) return 'تسجيل صوتي';
+    final t = (m['text'] ?? '').toString();
+    return t.isEmpty ? 'رسالة' : t;
+  }
+
+  Map<String, dynamic> _replyPayload() {
+    final r = _reply!;
+    return {
+      'id': r['id'] ?? '',
+      'name': r['senderName'] ?? '',
+      'text': _replyPreview(r),
+    };
+  }
+
+  /// إضافة/إزالة تفاعل رمز تعبيري على رسالة (مخزن في messages/$id/reactions/$uid).
+  Future<void> _react(Map<String, dynamic> m, String emoji) async {
+    final id = m['id'].toString();
+    final reactions = (m['reactions'] as Map?) ?? {};
+    final current = reactions[_uid]?.toString();
+    final ref = FirebaseDatabase.instance.ref('messages/$id/reactions');
+    try {
+      if (current == emoji) {
+        await ref.child(_uid).remove();
+      } else {
+        await ref.child(_uid).set(emoji);
+      }
+    } catch (e) {
+      _toast('تعذر إضافة التفاعل: ${_shortError(e)}');
+    }
+  }
+
+  /// Sheet يظهر بالضغط المطول: صف رموز التفاعل + رد + نسخ النص.
+  Future<void> _openMessageActions(Map<String, dynamic> m) async {
+    final hasText = (m['text'] ?? '').toString().trim().isNotEmpty;
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(height: 10),
+          Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+            for (final e in kReactionEmojis)
+              GestureDetector(
+                onTap: () {
+                  _react(m, e);
+                  Navigator.pop(sheetCtx);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Text(e, style: const TextStyle(fontSize: 28)),
+                ),
+              ),
+          ]),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.reply, color: Color(0xFFE85C5C)),
+            title: const Text('رد على الرسالة', textDirection: TextDirection.rtl),
+            onTap: () {
+              Navigator.pop(sheetCtx);
+              _replyTo(m);
+            },
+          ),
+          if (hasText)
+            ListTile(
+              leading: const Icon(Icons.copy, color: Color(0xFFE85C5C)),
+              title: const Text('نسخ النص', textDirection: TextDirection.rtl),
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: m['text'].toString()));
+                Navigator.pop(sheetCtx);
+                _toast('تم نسخ الرسالة');
+              },
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+  }
+
   Future<void> _sendText() async {
     final text = _input.text.trim();
     if (text.isEmpty || _sending) return;
@@ -118,19 +250,61 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       'senderName': _name.trim(),
       'time': ServerValue.timestamp,
     };
-    if (_reply != null) {
-      data['replyTo'] = {
-        'id': _reply!['id'] ?? '',
-        'name': _reply!['senderName'] ?? '',
-        'text': _reply!['text'] ?? 'تسجيل صوتي',
-      };
-    }
+    if (_reply != null) data['replyTo'] = _replyPayload();
     try {
       await FirebaseDatabase.instance.ref('messages').push().set(data);
       _input.clear();
       if (mounted) setState(() => _reply = null);
     } catch (e) {
       _toast('تعذر الإرسال: ${_shortError(e)}');
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  /// اختيار صورة أو فيديو من المعرض ثم إرسالهما بنفس فكرة الصوت:
+  /// الملف يُقرأ بايتات → يحوَّل Base64 → يُحفظ نصًا في Realtime Database (بدون Firebase Storage).
+  Future<void> _pickMedia({required bool isVideo}) async {
+    if (_uid.trim().isEmpty || _name.trim().isEmpty) {
+      _toast('بيانات الحساب غير جاهزة، أعد تسجيل الدخول');
+      return;
+    }
+    if (_sending) return;
+    try {
+      final XFile? file = isVideo
+          ? await _picker.pickVideo(
+              source: ImageSource.gallery,
+              maxDuration: const Duration(minutes: 3),
+            )
+          : await _picker.pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 1280,
+              imageQuality: 70,
+            );
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      final limit = isVideo ? _maxVideoBytes : _maxImageBytes;
+      if (bytes.lengthInBytes > limit) {
+        _toast(isVideo
+            ? 'الفيديو كبير جدًا، اختر فيديو أقل من 10 ميجا'
+            : 'الصورة كبيرة جدًا، اختر صورة أقل من 4 ميجا');
+        return;
+      }
+      setState(() => _sending = true);
+      final data = <String, dynamic>{
+        'mediaType': isVideo ? 'video' : 'image',
+        'mediaBase64': base64Encode(bytes),
+        'mediaName': file.name,
+        'mediaSize': bytes.lengthInBytes,
+        'senderId': _uid,
+        'senderName': _name.trim(),
+        'time': ServerValue.timestamp,
+      };
+      if (_reply != null) data['replyTo'] = _replyPayload();
+      await FirebaseDatabase.instance.ref('messages').push().set(data);
+      if (mounted) setState(() => _reply = null);
+    } catch (e) {
+      _toast('تعذر إرسال الوسائط: ${_shortError(e)}');
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -245,7 +419,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         'senderName': _name.trim(),
         'time': ServerValue.timestamp,
       };
+      if (_reply != null) data['replyTo'] = _replyPayload();
       await FirebaseDatabase.instance.ref('messages').push().set(data);
+      if (mounted) setState(() => _reply = null);
     } catch (e) {
       _toast('تعذر إرسال التسجيل: ${_shortError(e)}');
     } finally {
@@ -321,7 +497,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     return MessageBubble(
                       message: m,
                       mine: m['senderId'] == _uid,
-                      onReply: () => _replyTo(m),
+                      myUid: _uid,
+                      onLongPress: () => _openMessageActions(m),
+                      onSwipeLeft: () => _replyTo(m),
+                      onReact: (e) => _react(m, e),
                     );
                   },
                 ),
@@ -331,7 +510,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   dense: true,
                   title: Text('الرد على ${_reply!['senderName']}', textDirection: TextDirection.rtl),
                   subtitle: Text(
-                    '${_reply!['text'] ?? 'تسجيل صوتي'}',
+                    _replyPreview(_reply!),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textDirection: TextDirection.rtl,
@@ -349,19 +528,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   Widget _inputBar() => SafeArea(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
           decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]),
           child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            IconButton(
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-              icon: Icon(
-                _input.text.trim().isEmpty ? Icons.mic : Icons.send,
-                color: const Color(0xFFE85C5C),
-                size: 26,
-              ),
-              onPressed: _input.text.trim().isEmpty ? _startRecording : _sendText,
-            ),
+            _circleAction(Icons.image_outlined, _sending ? null : () => _pickMedia(isVideo: false)),
+            _circleAction(Icons.videocam_outlined, _sending ? null : () => _pickMedia(isVideo: true)),
+            _micOrSend(),
             Expanded(
               child: TextField(
                 controller: _input,
@@ -381,6 +553,42 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ),
             ),
           ]),
+        ),
+      );
+
+  /// زر دائري بخلفية وردية فاتحة (صورة / فيديو).
+  Widget _circleAction(IconData icon, VoidCallback? onTap) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Material(
+          color: const Color(0xFFFFECEC),
+          shape: const CircleBorder(),
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+            icon: Icon(icon, color: const Color(0xFFE85C5C), size: 22),
+            onPressed: onTap,
+          ),
+        ),
+      );
+
+  /// زر الميكروفون / الإرسال الدائري الأحمر.
+  Widget _micOrSend() => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Material(
+          color: const Color(0xFFE85C5C),
+          shape: const CircleBorder(),
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+            icon: _sending
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+                : Icon(_input.text.trim().isEmpty ? Icons.mic : Icons.send,
+                    color: Colors.white, size: 22),
+            onPressed: _sending ? null : (_input.text.trim().isEmpty ? _startRecording : _sendText),
+          ),
         ),
       );
 
@@ -470,7 +678,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 class _LiveWavePainter extends CustomPainter {
   final List<double> values;
   static const int _bars = 38;
-
   _LiveWavePainter(this.values);
 
   @override
@@ -479,14 +686,11 @@ class _LiveWavePainter extends CustomPainter {
       ..color = const Color(0xFFE85C5C)
       ..strokeWidth = 2.5
       ..strokeCap = StrokeCap.round;
-
     final step = s.width / _bars;
     final barW = step * 0.55;
-
     // Take last up-to-_bars values (newest on right).
     final tail = values.length > _bars ? values.sublist(values.length - _bars) : values;
     final pad = _bars - tail.length;
-
     for (var i = 0; i < _bars; i++) {
       final double v;
       if (i < pad) {

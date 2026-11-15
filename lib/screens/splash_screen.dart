@@ -124,21 +124,37 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                   child: SlideTransition(
                     position: Tween<Offset>(begin: const Offset(0, 0.4), end: Offset.zero)
                         .animate(CurvedAnimation(parent: _fade, curve: Curves.easeOutCubic)),
-                    child: const Text(
-                      'Ahmed Saad Community',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.bold, letterSpacing: 0.3),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Text(
+                          'Ahmed Saad Community',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold, letterSpacing: 0.3),
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'مجتمعك .. صوت وصورة وفيديو في مكان واحد',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 36),
+                const SizedBox(height: 28),
                 FadeTransition(
                   opacity: _fade,
-                  child: const SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white, valueColor: null),
-                  ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: const [
+                    SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                    ),
+                    SizedBox(height: 10),
+                    Text('جارٍ تجهيز المحادثة...',
+                        style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  ]),
                 ),
               ],
             ),

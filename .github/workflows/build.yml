@@ -1,4 +1,4 @@
-name: Flutter APK Build
+name: Flutter APK Build (Signed Automatically)
 
 on:
   push:
@@ -7,10 +7,13 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# مطلوبة عشان ينزل ملف APK تلقائيًا في صفحة Releases
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,13 +34,37 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Generate app launcher icons
-        run: dart run flutter_launcher_icons
+      - name: Generate app launcher icons (non-blocking)
+        run: dart run flutter_launcher_icons || true
+
+      # توقيع تلقائي بدون أي إعداد يدوي:
+      # - لو فيه سر KEYSTORE_BASE64 على المستودع نستخدمه.
+      # - وإلا نستخدم المفتاح المرفق في android/signing/ فيتوقّع البناء تلقائيًا.
+      - name: Prepare signing keystore
+        env:
+          SECRET_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          SECRET_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+          SECRET_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          mkdir -p android/app
+          if [ -n "$SECRET_B64" ]; then
+            echo "$SECRET_B64" | base64 -d > android/app/release-key.jks
+            {
+              echo "storePassword=$SECRET_STORE_PASS"
+              echo "keyPassword=$SECRET_KEY_PASS"
+              echo "keyAlias=${SECRET_ALIAS:-release}"
+              echo "storeFile=release-key.jks"
+            } > android/key.properties
+          else
+            cp android/signing/key.properties android/key.properties
+            base64 -d android/signing/release-key.jks.b64 > android/app/release-key.jks
+          fi
 
       - name: Analyze (non-blocking)
         run: flutter analyze --no-fatal-infos || true
 
-      - name: Build release APK
+      - name: Build signed release APK
         run: flutter build apk --release
 
       - name: Upload APK artifact
@@ -46,3 +73,16 @@ jobs:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      # رفع APK تلقائيًا في صفحة Releases تحت اسم tag "latest"
+      # عشان تنزّل ملف التثبيت مباشرة من غير ما تدخل على الـ Actions.
+      - name: Publish APK to Latest Release
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: أحدث نسخة مبنية تلقائيًا
+          body: |
+            نسخة مبنية وموقّعة تلقائيًا من GitHub Actions.
+            حمّل ملف app-release.apk من المرفقات وثبته على الموبايل مباشرة.
+          files: build/app/outputs/flutter-apk/app-release.apk
