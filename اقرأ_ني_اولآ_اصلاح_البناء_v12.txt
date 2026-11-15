@@ -1,0 +1,40 @@
+========================================================
+ Ahmed Saad Community — الإصدار الثاني عشر (v12)
+ إصلاحان لإيقاف البناء في GitHub Actions (بنية APK موقّعة)
+========================================================
+
+1) ليه البناء وقف في المحاولتين السابقتين؟
+--------------------------------------------------------
+• المرة الأولى (v10): خطأ Dart
+  Undefined name 'AndroidForegroundServiceType'
+  الحل: حذف الحقل الاختياري foregroundServiceTypes من إعدادات
+  خدمة الخلفية؛ الخدمة تشتغل من غيره تمامًا.
+
+• المرة الثانية (v11): خطأ Gradle
+  Dependency ':flutter_local_notifications' requires core
+  library desugaring to be enabled for :app.
+  الحل: تفعيل Core Library Desugaring في android/app/build.gradle:
+  - compileOptions { coreLibraryDesugaringEnabled true }
+  - dependencies { coreLibraryDesugaring
+    'com.android.tools:desugar_jdk_libs:2.1.4' }
+  السبب: مكتبة الإشعارات تستخدم java.time وتحتاج هذا الدعم
+  على أندرويد 23–33.
+
+2) الملفات المتغيرة في v12
+--------------------------------------------------------
+android/app/build.gradle        (تفعيل desugaring + المكتبة)
+lib/utils/background_notification_service.dart (إزالة الحقل القديم)
+pubspec.yaml                    (اعتمادية الخدمة المباشرة فقط)
+
+3) ملاحظات مهمة
+--------------------------------------------------------
+• تحذيرات Gradle / AGP / Kotlin "will soon be dropped" في اللوج
+  إنذارات مستقبلية وليست أخطاء — البناء يعدي عادي معها.
+• مفيش أي تغيير على قواعد Firebase ولا على شكل البيانات؛
+  الرسائل والصور والفيديوهات والردود والتفاعلات زي ما هي.
+• الخطوات بعد فك الضغط:
+  flutter pub get
+  flutter build apk --release
+  أو ارفع على GitHub Actions وهيبني APK موقعّع تلقائيًا.
+========================================================
+بالتوفيق يا دكتور أحمد 💪

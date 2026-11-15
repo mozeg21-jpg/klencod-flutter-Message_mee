@@ -27,6 +27,8 @@ android {
         ndkVersion "28.2.13676358"
     }
     compileOptions {
+        // مطلوب من flutter_local_notifications (يعمل java.time على أندرويد القديمة)
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -60,4 +62,6 @@ flutter {
 dependencies {
     implementation platform('com.google.firebase:firebase-bom:34.1.0')
     implementation 'com.google.firebase:firebase-database'
+    // دعم desugaring لمكتبة الإشعارات (java.time على أندرويد 23 فأعلى)
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
 }
