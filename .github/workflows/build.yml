@@ -37,29 +37,40 @@ jobs:
       - name: Generate app launcher icons (non-blocking)
         run: dart run flutter_launcher_icons || true
 
-      # توقيع تلقائي بدون أي إعداد يدوي:
-      # - لو فيه سر KEYSTORE_BASE64 على المستودع نستخدمه.
-      # - وإلا نستخدم المفتاح المرفق في android/signing/ فيتوقّع البناء تلقائيًا.
-      - name: Prepare signing keystore
+      # توقيع تلقائي بدون أي إعداد يدوي، وثلاث طبقات ضمان عشان البناء ما يوقفش:
+      # 1) لو فيه سر KEYSTORE_BASE64 على المستودع نستخدمه.
+      # 2) وإلا نفك ترميز المفتاح المرفق في android/signing/release-key.jks.b64.
+      # 3) ولو المفتاح غير متوفر نهائيًا نحذف key.properties فيرجع Gradle لتوقيع debug
+      #    التلقائي → الـ APK يبقى موقّعًا وقابلًا للتثبيت بدل فشل validateSigningRelease.
+      - name: Prepare signing keystore (self-healing)
         env:
           SECRET_B64: ${{ secrets.KEYSTORE_BASE64 }}
           SECRET_STORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
           SECRET_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
           SECRET_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
+          set -euo pipefail
           mkdir -p android/app
-          if [ -n "$SECRET_B64" ]; then
-            echo "$SECRET_B64" | base64 -d > android/app/release-key.jks
+          TARGET_JKS="android/app/release-key.jks"
+          if [ -n "${SECRET_B64:-}" ]; then
+            echo "==> Using keystore from GitHub secret KEYSTORE_BASE64"
+            echo "$SECRET_B64" | base64 -d > "$TARGET_JKS"
             {
-              echo "storePassword=$SECRET_STORE_PASS"
-              echo "keyPassword=$SECRET_KEY_PASS"
+              echo "storePassword=${SECRET_STORE_PASS:-}"
+              echo "keyPassword=${SECRET_KEY_PASS:-}"
               echo "keyAlias=${SECRET_ALIAS:-release}"
               echo "storeFile=release-key.jks"
             } > android/key.properties
-          else
+          elif [ -s android/signing/release-key.jks.b64 ]; then
+            echo "==> Decoding committed keystore android/signing/release-key.jks.b64"
+            base64 -d android/signing/release-key.jks.b64 > "$TARGET_JKS"
             cp android/signing/key.properties android/key.properties
-            base64 -d android/signing/release-key.jks.b64 > android/app/release-key.jks
+          else
+            echo "::warning::No release keystore found; falling back to automatic debug signing (APK stays signed and installable)."
+            rm -f android/key.properties "$TARGET_JKS"
           fi
+          echo "==> Keystore status:"
+          if [ -s "$TARGET_JKS" ]; then ls -l "$TARGET_JKS"; else echo "    release-key.jks absent -> debug signing will be used"; fi
 
       - name: Analyze (non-blocking)
         run: flutter analyze --no-fatal-infos || true

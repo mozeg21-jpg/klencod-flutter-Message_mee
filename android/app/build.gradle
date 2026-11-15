@@ -15,6 +15,15 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// جاهزية المفتاح الرسمي: لازم ملف الخصائص يكون موجودًا وملف الـ JKS نفسه موجود فعليًا.
+// في الـ CI الجديد (git push) يكون ملف android/app/release-key.jks مستبعَدًا من .gitignore،
+// فلو فشل توليده لأي سبب لا نبني توقيع release على ملف مفقود، بل نرجع لتوقيع debug التلقائي.
+def releaseStoreFile = keystoreProperties['storeFile'] != null ? file(keystoreProperties['storeFile']) : null
+def releaseSigningReady = keystorePropertiesFile.exists() &&
+        releaseStoreFile != null &&
+        releaseStoreFile.exists() &&
+        keystoreProperties['keyAlias'] != null
+
 android {
     namespace 'com.ahmed.app'
     compileSdk 36
@@ -37,17 +46,19 @@ android {
     }
     signingConfigs {
         release {
-            if (keystoreProperties['keyAlias'] != null) {
+            if (releaseSigningReady) {
                 keyAlias keystoreProperties['keyAlias']
                 keyPassword keystoreProperties['keyPassword']
-                storeFile file(keystoreProperties['storeFile'])
+                storeFile releaseStoreFile
                 storePassword keystoreProperties['storePassword']
             }
         }
     }
     buildTypes {
         release {
-            signingConfig keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
+            // المفتاح الرسمي جاهز → توقيع release؛ otherwise توقيع debug تلقائي.
+            // في الحالتين الـ APK موقّع وقابل للتثبيت، ولا يفشل البناء عند validateSigningRelease.
+            signingConfig releaseSigningReady ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

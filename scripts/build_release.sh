@@ -7,13 +7,25 @@
 set -e
 cd "$(dirname "$0")/.."
 
-echo "🔄 1/3) جلب الاعتماديات..."
+echo "🔄 1/4) جلب الاعتماديات..."
 flutter pub get
 
-echo "🎨 2/3) توليد أيقونة التطبيق..."
+echo "🔑 2/4) تجهيز مفتاح التوقيع..."
+if [ ! -s android/app/release-key.jks ] && [ -s android/signing/release-key.jks.b64 ]; then
+  mkdir -p android/app
+  base64 -d android/signing/release-key.jks.b64 > android/app/release-key.jks
+  cp android/signing/key.properties android/key.properties
+  echo "    تم استعادة release-key.jks من مجلد android/signing/."
+elif [ ! -s android/app/release-key.jks ]; then
+  echo "    تحذير: مفتاح release غير متوفر؛ Gradle سيستخدم توقيع debug التلقائي."
+  echo "    الـ APK يبقى موقّعًا وقابلًا للتثبيت في كل الأحوال."
+  rm -f android/key.properties
+fi
+
+echo "🎨 3/4) توليد أيقونة التطبيق..."
 dart run flutter_launcher_icons || true
 
-echo "📦 3/3) بناء نسخة الإفراج الموقّعة..."
+echo "📦 4/4) بناء نسخة الإفراج الموقّعة..."
 flutter build apk --release
 
 echo ""

@@ -5,6 +5,12 @@ android/key.properties
 android/app/release-key.jks
 android/signing-credentials.txt
 
+# ===== أصول التوقيع المرفوعة عمدًا للبناء التلقائي (لا تتجاهلها أبدًا) =====
+# هذه الملفات هي اللي بيستخدمها GitHub Actions لإعادة بناء مفتاح التوقيع وقت البناء.
+!android/signing/
+!android/signing/release-key.jks.b64
+!android/signing/key.properties
+
 # ===== Flutter / Dart =====
 build/
 .dart_tool/
