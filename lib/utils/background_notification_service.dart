@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
@@ -26,7 +25,6 @@ class BackgroundNotificationService {
         notificationChannelId: 'bg_messages',
         initialNotificationTitle: 'إشعارات المجتمع مفعلة',
         initialNotificationContent: 'بتستلم الرسائل الجديدة حتى والتطبيق مقفول',
-        foregroundServiceTypes: [AndroidForegroundServiceType.dataSync],
       ),
       iosConfiguration: IosConfiguration(autoStart: false),
     );

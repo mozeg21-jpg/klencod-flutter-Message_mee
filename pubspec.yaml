@@ -25,7 +25,6 @@ dependencies:
   flutter_local_notifications: ^17.2.4
   # خدمة خلفية: إشعارات والتطبيق مقفول (بدون خادم وبدون تكلفة)
   flutter_background_service: ^5.1.0
-  flutter_background_service_android: ^6.2.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
