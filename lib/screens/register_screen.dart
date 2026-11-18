@@ -11,6 +11,7 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _username = TextEditingController();
+  final _displayName = TextEditingController();
   String _uid = '...';
   bool _busy = false;
 
@@ -18,13 +19,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void initState() { super.initState(); _loadUid(); }
   Future<void> _loadUid() async { try { final id = await DeviceUid.get(); if (mounted) setState(() => _uid = id); } catch (_) {} }
   @override
-  void dispose() { _username.dispose(); super.dispose(); }
+  void dispose() { _username.dispose(); _displayName.dispose(); super.dispose(); }
 
   Future<void> _continue() async {
     final username = _username.text.trim().toLowerCase();
+    final displayName = _displayName.text.trim();
     final valid = RegExp(r'^@[a-z0-9_]{3,20}$').hasMatch(username);
     if (!valid) {
       _toast('اكتب يوزر صحيح مثل @ajdd1 (حروف إنجليزية وأرقام فقط)');
+      return;
+    }
+    if (displayName.length < 2 || displayName.length > 30) {
+      _toast('اكتب اسم الظهور من حرفين إلى 30 حرفًا');
+      return;
+    }
+    if (_uid == '...' || _uid.trim().isEmpty) {
+      _toast('انتظر لحظة حتى يجهز معرف الجهاز');
       return;
     }
     if (_busy) return;
@@ -43,11 +53,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', _uid);
-      await prefs.setString('name', username);
+      await prefs.setString('name', displayName);
       await prefs.setString('username', username);
       await prefs.setBool('show_id', false);
       await FirebaseDatabase.instance.ref('users/$_uid').update({
-        'name': username,
+        'name': displayName,
         'username': username,
         'showId': false,
         'createdAt': ServerValue.timestamp,
@@ -110,22 +120,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       padding: const EdgeInsets.all(20),
                       child: Column(
                         children: [
-                          _label('معرّف المستخدم'),
-                          TextField(
-                            controller: TextEditingController(text: _uid),
-                            readOnly: true,
-                            textDirection: TextDirection.ltr,
-                            decoration: _decoration(),
-                          ),
-                          const SizedBox(height: 16),
                           _label('Username'),
                           TextField(
                             controller: _username,
                             maxLength: 21,
                             textDirection: TextDirection.ltr,
+                            decoration: _decoration('@ajdd1'),
+                          ),
+                          const SizedBox(height: 16),
+                          _label('اسم الظهور'),
+                          TextField(
+                            controller: _displayName,
+                            maxLength: 30,
+                            textDirection: TextDirection.rtl,
                             textInputAction: TextInputAction.done,
                             onSubmitted: (_) => _continue(),
-                            decoration: _decoration('@ajdd1'),
+                            decoration: _decoration('اكتب اسمك الذي سيظهر للناس'),
                           ),
                           const Align(
                             alignment: Alignment.centerRight,

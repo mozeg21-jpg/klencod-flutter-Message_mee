@@ -7,7 +7,11 @@ class DeviceUid {
   static Future<String> get() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_key);
-    if (saved != null && saved.isNotEmpty) return saved;
+    if (saved != null && saved.isNotEmpty) {
+      final safe = _safeKey(saved);
+      if (safe != saved) await prefs.setString(_key, safe);
+      return safe;
+    }
     final info = DeviceInfoPlugin();
     String value;
     try {
@@ -16,7 +20,17 @@ class DeviceUid {
     } catch (_) {
       value = 'u_${DateTime.now().microsecondsSinceEpoch}';
     }
+    value = _safeKey(value);
     await prefs.setString(_key, value);
     return value;
   }
+
+  // Firebase يمنع . # $ [ ] / داخل أسماء العقد.
+  static String _safeKey(String value) => value
+      .replaceAll('.', '_dot_')
+      .replaceAll('#', '_hash_')
+      .replaceAll('\$', '_dollar_')
+      .replaceAll('[', '_left_')
+      .replaceAll(']', '_right_')
+      .replaceAll('/', '_slash_');
 }
