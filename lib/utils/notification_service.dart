@@ -27,11 +27,11 @@ class NotificationService {
   }
 
   /// طلب إذن الإشعارات (أندرويد 13+).
-  static Future<void> requestPermission() async {
+  static Future<bool> requestPermission() async {
     final impl = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-    await impl?.requestNotificationsPermission();
+    return await impl?.requestNotificationsPermission() ?? true;
   }
 
   static Future<void> show({

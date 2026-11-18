@@ -27,6 +27,7 @@ class MessageBubble extends StatelessWidget {
     final audio = (message['audioBase64'] ?? '').toString();
     final mediaType = (message['mediaType'] ?? '').toString();
     final mediaBase64 = (message['mediaBase64'] ?? '').toString();
+    // رسائلي شمال، ورسائل باقي أعضاء الجروب يمين.
     final bg = mine ? const Color(0xFFE85C5C) : Colors.white;
     final textColor = mine ? Colors.white : const Color(0xFF111111);
     final time = DateTime.fromMillisecondsSinceEpoch(
@@ -64,15 +65,12 @@ class MessageBubble extends StatelessWidget {
       builder: (context, value, child) => Opacity(
           opacity: value,
           child: Transform.translate(
-              offset: Offset(((mine ? 10 : -10) * (1 - value)).toDouble(), 0), child: child)),
-      child: GestureDetector(
-        // ضغط مطوّل → قائمة التفاعلات والرد؛ سحب لليسار السريع → رد مباشر (زي واتساب)
+              offset: Offset(((mine ? -10 : 10) * (1 - value)).toDouble(), 0), child: child)),
+      child: _SwipeToReply(
         onLongPress: onLongPress,
-        onHorizontalDragEnd: (d) {
-          if ((d.primaryVelocity ?? 0) < -220) onSwipeLeft();
-        },
+        onSwipeLeft: onSwipeLeft,
         child: Align(
-          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+          alignment: mine ? Alignment.centerLeft : Alignment.centerRight,
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             padding: content is _ImageMessage || content is VideoMessageWidget
@@ -85,13 +83,13 @@ class MessageBubble extends StatelessWidget {
                   ? const BorderRadius.only(
                       topLeft: Radius.circular(16),
                       topRight: Radius.circular(16),
-                      bottomLeft: Radius.circular(16),
-                      bottomRight: Radius.circular(5))
+                      bottomLeft: Radius.circular(5),
+                      bottomRight: Radius.circular(16))
                   : const BorderRadius.only(
-                      topLeft: Radius.circular(5),
+                      topLeft: Radius.circular(16),
                       topRight: Radius.circular(16),
                       bottomLeft: Radius.circular(16),
-                      bottomRight: Radius.circular(16)),
+                      bottomRight: Radius.circular(5)),
               border: mine ? null : Border.all(color: const Color(0xFFF3C9C9)),
               boxShadow: const [BoxShadow(color: Color(0x12000000), blurRadius: 5, offset: Offset(0, 2))],
             ),
@@ -138,6 +136,84 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+/// سحب رسالة ناحية الشمال مثل واتساب: الفقاعة تتحرك مع الإصبع،
+/// ويظهر زر الرد قبل تأكيد الحركة.
+class _SwipeToReply extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onLongPress;
+  final VoidCallback onSwipeLeft;
+
+  const _SwipeToReply({
+    required this.child,
+    required this.onLongPress,
+    required this.onSwipeLeft,
+  });
+
+  @override
+  State<_SwipeToReply> createState() => _SwipeToReplyState();
+}
+
+class _SwipeToReplyState extends State<_SwipeToReply> {
+  static const _maxDrag = 82.0;
+  static const _replyThreshold = 52.0;
+  double _drag = 0;
+  bool _dragging = false;
+
+  void _update(DragUpdateDetails details) {
+    final next = _drag + details.delta.dx;
+    if (next <= 0) {
+      setState(() => _drag = next.clamp(-_maxDrag, 0.0));
+    }
+  }
+
+  void _finish() {
+    final shouldReply = _drag <= -_replyThreshold;
+    setState(() {
+      _drag = 0;
+      _dragging = false;
+    });
+    if (shouldReply) widget.onSwipeLeft();
+  }
+
+  @override
+  Widget build(BuildContext context) => Stack(
+        clipBehavior: Clip.none,
+        children: [
+          AnimatedContainer(
+            duration: _dragging ? Duration.zero : const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            transform: Matrix4.translationValues(_drag, 0, 0),
+            child: GestureDetector(
+              onLongPress: widget.onLongPress,
+              onHorizontalDragStart: (_) => setState(() => _dragging = true),
+              onHorizontalDragUpdate: _update,
+              onHorizontalDragEnd: (_) => _finish(),
+              onHorizontalDragCancel: _finish,
+              child: widget.child,
+            ),
+          ),
+          Positioned(
+            right: 2,
+            top: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: Center(
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 80),
+                  opacity: (-_drag / _replyThreshold).clamp(0.0, 1.0),
+                  child: const CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Color(0xFFE85C5C),
+                    child: Icon(Icons.reply, color: Colors.white, size: 17),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+}
+
 /// صف رموز التفاعل أسفل الفقاعة؛ الضغط على رمز يضيفه/يزيله للمرسل.
 class _ReactionRow extends StatelessWidget {
   final Map<String, int> counts;
@@ -159,7 +235,7 @@ class _ReactionRow extends StatelessWidget {
       spacing: 4,
       runSpacing: 2,
       children: counts.entries.map((e) {
-        final chosen = reactions[myUid] == e.key;
+        final chosen = reactions[_reactionKey(myUid)] == e.key || reactions[myUid] == e.key;
         return GestureDetector(
           onTap: () => onReact(e.key),
           child: Container(
@@ -181,6 +257,14 @@ class _ReactionRow extends StatelessWidget {
     );
   }
 }
+
+String _reactionKey(String value) => value
+    .replaceAll('.', '_dot_')
+    .replaceAll('#', '_hash_')
+    .replaceAll('\$', '_dollar_')
+    .replaceAll('[', '_left_')
+    .replaceAll(']', '_right_')
+    .replaceAll('/', '_slash_');
 
 /// صورة داخل فقاعة المحادثة: تفك Base64 مرة واحدة وتخزن النتيجة،
 /// وتفتح ملء الشاشة عند الضغط مع إمكانية التكبير.

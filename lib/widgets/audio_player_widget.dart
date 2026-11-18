@@ -2,12 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_sound/flutter_sound.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Voice-message player.
-/// - Uses the SAME flutter_sound library that recorded the audio (Codec.aacMP4)
-///   → guaranteed format compatibility, no "no sound" bug.
+/// - Uses audioplayers with the cached m4a file produced by the recorder.
 /// - Caches the decoded audio file on device after first play → offline playback,
 ///   no re-download from Firebase.
 /// - Live progress: waveform bars fill with color as playback advances,
@@ -29,9 +28,11 @@ class AudioPlayerWidget extends StatefulWidget {
 }
 
 class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
-  final FlutterSoundPlayer _player = FlutterSoundPlayer();
-  StreamSubscription<PlaybackDisposition>? _progressSub;
-  bool _playing = false, _paused = false, _loading = false, _opening = false;
+  final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _progressSub;
+  StreamSubscription<void>? _completeSub;
+  Duration _total = Duration.zero;
+  bool _playing = false, _paused = false, _loading = false;
   double _progress = 0.0; // 0.0 .. 1.0
   String? _cachedPath;
   List<double> _levels = const [];
@@ -44,43 +45,29 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
         .where((x) => x.isNotEmpty)
         .map((x) => double.tryParse(x) ?? .2)
         .toList();
+    _progressSub = _player.onPositionChanged.listen((position) {
+      if (_total.inMilliseconds > 0 && mounted) {
+        setState(() => _progress =
+            (position.inMilliseconds / _total.inMilliseconds).clamp(0.0, 1.0));
+      }
+    });
+    _completeSub = _player.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _playing = false;
+          _paused = false;
+          _progress = 0.0;
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _progressSub?.cancel();
-    _try(() async {
-      await _player.stopPlayer();
-      await _player.closePlayer();
-    });
+    _completeSub?.cancel();
+    _player.dispose();
     super.dispose();
-  }
-
-  Future<void> _try(Future<void> Function() fn) async {
-    try {
-      await fn();
-    } catch (_) {}
-  }
-
-  Future<bool> _ensureOpen() async {
-    if (_player.isOpen()) return true;
-    if (_opening) return false;
-    _opening = true;
-    try {
-      await _player.openPlayer();
-      await _player.setSubscriptionDuration(const Duration(milliseconds: 150));
-      _progressSub = _player.onProgress?.listen((d) {
-        final total = d.duration.inMilliseconds;
-        if (total > 0 && mounted) {
-          setState(() => _progress = (d.position.inMilliseconds / total).clamp(0.0, 1.0));
-        }
-      });
-      return true;
-    } catch (_) {
-      return false;
-    } finally {
-      _opening = false;
-    }
   }
 
   Future<String> _ensureFile() async {
@@ -88,7 +75,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/audio-cache-${widget.id}.m4a');
     if (!await file.exists()) {
-      await file.writeAsBytes(base64Decode(widget.base64Audio), flush: true);
+      var encoded = widget.base64Audio.trim();
+      if (encoded.contains(',')) encoded = encoded.split(',').last;
+      await file.writeAsBytes(base64Decode(encoded), flush: true);
     }
     _cachedPath = file.path;
     return file.path;
@@ -97,7 +86,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   Future<void> _toggle() async {
     if (_loading) return;
     if (_playing) {
-      await _try(() => _player.pausePlayer());
+      await _player.pause();
       if (mounted) {
         setState(() {
           _playing = false;
@@ -108,26 +97,14 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
     }
     setState(() => _loading = true);
     try {
-      final ok = await _ensureOpen();
-      if (!ok) throw 'player-open-failed';
       final path = await _ensureFile();
       if (_paused) {
-        await _player.resumePlayer();
+        await _player.resume();
       } else {
         if (mounted) setState(() => _progress = 0.0);
-        await _player.startPlayer(
-          fromURI: path,
-          codec: Codec.aacMP4,
-          whenFinished: () {
-            if (mounted) {
-              setState(() {
-                _playing = false;
-                _paused = false;
-                _progress = 0.0;
-              });
-            }
-          },
-        );
+        await _player.setSource(DeviceFileSource(path));
+        _total = await _player.getDuration() ?? Duration.zero;
+        await _player.resume();
       }
       if (mounted) {
         setState(() {
@@ -201,9 +178,9 @@ class _WavePainter extends CustomPainter {
   List<double> _sample() {
     if (levels.isEmpty) return List.filled(_bars, 0.25);
     if (levels.length <= _bars) {
-      final out = levels.map((x) => x.clamp(.08, 1.0).toDouble()).toList();
+      final out = levels.map((x) => x.clamp(.02, 1.0).toDouble()).toList();
       while (out.length < _bars) {
-        out.add(0.2);
+        out.add(0.02);
       }
       return out;
     }
@@ -216,7 +193,7 @@ class _WavePainter extends CustomPainter {
       for (var j = start; j < end; j++) {
         sum += levels[j];
       }
-      out.add((sum / (end - start)).clamp(.08, 1.0));
+      out.add((sum / (end - start)).clamp(.02, 1.0));
     }
     return out;
   }

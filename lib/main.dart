@@ -10,7 +10,8 @@ Future<void> main() async {
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     FirebaseDatabase.instance.setPersistenceEnabled(true);
-    // خدمة الإشعارات الخلفية: تنبيهات والتطبيق مقفول (بدون خادم)
+    // تهيئة الإشعارات بعد Firebase، لكن لا نشغّل Foreground Service تلقائيًا
+    // أثناء الإقلاع؛ هذا يمنع crash على أندرويد 13/14 قبل منح إذن الإشعارات.
     await BackgroundNotificationService.initialize();
   } catch (_) {}
   runApp(const AhmedSaadCommunityApp());

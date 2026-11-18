@@ -20,7 +20,9 @@ class BackgroundNotificationService {
     await service.configure(
       androidConfiguration: AndroidConfiguration(
         onStart: _onStart,
-        autoStart: true,
+        // لا تبدأ الخدمة أثناء إقلاع التطبيق قبل اكتمال واجهة Flutter
+        // وإذن الإشعارات؛ بدءها مبكرًا كان سببًا شائعًا لإغلاق التطبيق.
+        autoStart: false,
         isForegroundMode: true,
         notificationChannelId: 'bg_messages',
         initialNotificationTitle: 'إشعارات المجتمع مفعلة',
@@ -28,6 +30,16 @@ class BackgroundNotificationService {
       ),
       iosConfiguration: IosConfiguration(autoStart: false),
     );
+  }
+
+  /// يبدأ بعد دخول المستخدم للمحادثة ومنح إذن الإشعارات، وليس أثناء شاشة
+  /// البداية؛ بهذه الطريقة لا يمكن للخدمة أن تغلق التطبيق عند الإقلاع.
+  static Future<void> start() async {
+    try {
+      await FlutterBackgroundService().startService();
+    } catch (_) {
+      // الإشعارات داخل التطبيق تظل عاملة حتى لو منع النظام الخدمة الخلفية.
+    }
   }
 
   @pragma('vm:entry-point')

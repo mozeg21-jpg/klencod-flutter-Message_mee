@@ -32,8 +32,11 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget> {
     try {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/chat_video_${widget.id}.mp4');
-      if (!await file.exists()) {
-        await file.writeAsBytes(base64Decode(widget.base64), flush: true);
+      if (!await file.exists() || await file.length() < 512) {
+        var encoded = widget.base64.trim();
+        if (encoded.contains(',')) encoded = encoded.split(',').last;
+        final bytes = base64Decode(encoded);
+        await file.writeAsBytes(bytes, flush: true);
       }
       final controller = VideoPlayerController.file(file);
       await controller.initialize();
@@ -41,7 +44,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget> {
         await controller.dispose();
         return;
       }
-      controller.setLooping(false);
+      await controller.setLooping(false);
       controller.addListener(_onProgress);
       _controller = controller;
       setState(() => _initializing = false);

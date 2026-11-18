@@ -40,7 +40,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   static const int _storedWaveBars = 40;
   // حدود حجم الوسائط (Base64 يزيد الحجم ~33% فلذلك نحافظ على ملفات صغيرة)
   static const int _maxImageBytes = 4 * 1024 * 1024; // 4 ميجا للصورة
-  static const int _maxVideoBytes = 10 * 1024 * 1024; // 10 ميجا للفيديو
+  // Base64 يزيد الحجم تقريبًا 33%، وRealtime Database لا يناسب ملفات كبيرة.
+  // 6MB خام ≈ 8MB Base64 حتى لا يفشل الحفظ أو التشغيل.
+  static const int _maxVideoBytes = 6 * 1024 * 1024;
   static const List<String> kReactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
   final Set<String> _notified = {};
   bool _initialLoad = true;
@@ -68,7 +70,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (_) {}
     try {
       await NotificationService.init();
-      await NotificationService.requestPermission();
+      // أندرويد 13+ يعرض نافذة إذن الإشعارات عند دخول المحادثة.
+      // لا نكتم النتيجة حتى يظل سلوك الإذن واضحًا للمستخدم.
+      final notificationsAllowed = await NotificationService.requestPermission();
+      if (!notificationsAllowed && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فعّل إذن الإشعارات من إعدادات التطبيق لاستقبال التنبيهات')),
+        );
+      }
     } catch (_) {}
     try {
       _subscription = FirebaseDatabase.instance.ref('messages').limitToLast(100).onValue.listen(_readMessages);
@@ -172,19 +181,37 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// إضافة/إزالة تفاعل رمز تعبيري على رسالة (مخزن في messages/$id/reactions/$uid).
   Future<void> _react(Map<String, dynamic> m, String emoji) async {
     final id = m['id'].toString();
-    final reactions = (m['reactions'] as Map?) ?? {};
-    final current = reactions[_uid]?.toString();
+    final key = _reactionKey(_uid);
     final ref = FirebaseDatabase.instance.ref('messages/$id/reactions');
     try {
+      // اقرأ القيمة الحالية من Firebase بدل الاعتماد على نسخة الرسالة
+      // القديمة الموجودة في الواجهة.
+      final safeSnapshot = await ref.child(key).get();
+      final legacySnapshot = key == _uid ? null : await ref.child(_uid).get();
+      final current = safeSnapshot.exists
+          ? safeSnapshot.value?.toString()
+          : legacySnapshot?.exists == true
+              ? legacySnapshot?.value?.toString()
+              : null;
       if (current == emoji) {
-        await ref.child(_uid).remove();
+        await ref.child(key).remove();
+        if (key != _uid) await ref.child(_uid).remove();
       } else {
-        await ref.child(_uid).set(emoji);
+        await ref.child(key).set(emoji);
       }
     } catch (e) {
-      _toast('تعذر إضافة التفاعل: ${_shortError(e)}');
+      _toast('تعذر تعديل التفاعل: ${_shortError(e)}');
     }
   }
+
+  // Realtime Database يمنع هذه الرموز داخل أسماء العقد.
+  String _reactionKey(String value) => value
+      .replaceAll('.', '_dot_')
+      .replaceAll('#', '_hash_')
+      .replaceAll('\$', '_dollar_')
+      .replaceAll('[', '_left_')
+      .replaceAll(']', '_right_')
+      .replaceAll('/', '_slash_');
 
   /// Sheet يظهر بالضغط المطول: صف رموز التفاعل + رد + نسخ النص.
   Future<void> _openMessageActions(Map<String, dynamic> m) async {
@@ -286,7 +313,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       final limit = isVideo ? _maxVideoBytes : _maxImageBytes;
       if (bytes.lengthInBytes > limit) {
         _toast(isVideo
-            ? 'الفيديو كبير جدًا، اختر فيديو أقل من 10 ميجا'
+            ? 'الفيديو كبير جدًا، اختر فيديو أقل من 6 ميجا'
             : 'الصورة كبيرة جدًا، اختر صورة أقل من 4 ميجا');
         return;
       }
@@ -339,8 +366,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         if (mounted) setState(() => _seconds++);
       });
       _recordingSubscription = _recorder.onProgress?.listen((d) {
-        final db = d.decibels ?? -45;
-        final v = ((db + 45) / 45).clamp(.08, 1.0).toDouble();
+        // القيم الأقل من هذا الحد تعتبر صمتًا ولا ترسم موجة وهمية.
+        final db = d.decibels ?? -60;
+        final raw = db <= -42 ? 0.02 : ((db + 42) / 42).clamp(0.02, 1.0).toDouble();
+        final previous = _levels.isEmpty ? raw : _levels.last;
+        final v = previous * 0.55 + raw * 0.45;
         if (mounted) {
           setState(() {
             _levels.add(v);
@@ -373,10 +403,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   /// Downsample raw levels into [count] averaged buckets, returned as CSV string.
   String _downsampleWaveform(List<double> raw, int count) {
-    if (raw.isEmpty) return List.filled(count, '0.25').join(',');
+    if (raw.isEmpty) return List.filled(count, '0.02').join(',');
     if (raw.length <= count) {
       return raw.map((x) => x.toStringAsFixed(2)).join(',') +
-          (raw.length < count ? ',${List.filled(count - raw.length, '0.2').join(',')}' : '');
+          (raw.length < count ? ',${List.filled(count - raw.length, '0.02').join(',')}' : '');
     }
     final bucket = raw.length / count;
     final out = <String>[];
@@ -388,7 +418,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         sum += raw[j];
       }
       final avg = sum / (end - start);
-      out.add(avg.clamp(.08, 1.0).toStringAsFixed(2));
+      out.add(avg.clamp(.02, 1.0).toStringAsFixed(2));
     }
     return out.join(',');
   }
