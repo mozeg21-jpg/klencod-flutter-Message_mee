@@ -14,11 +14,11 @@ Future<void> main() async {
     // أثناء الإقلاع؛ هذا يمنع crash على أندرويد 13/14 قبل منح إذن الإشعارات.
     await BackgroundNotificationService.initialize();
   } catch (_) {}
-  runApp(const AhmedSaadCommunityApp());
+  runApp(const AhmedMessengerApp());
 }
 
-class AhmedSaadCommunityApp extends StatelessWidget {
-  const AhmedSaadCommunityApp({super.key});
+class AhmedMessengerApp extends StatelessWidget {
+  const AhmedMessengerApp({super.key});
 
   @override
   Widget build(BuildContext context) => MaterialApp(

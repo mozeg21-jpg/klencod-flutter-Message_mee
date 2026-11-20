@@ -7,16 +7,17 @@ import 'call_screen.dart';
 import '../utils/call_service.dart';
 import 'group_chat_screen.dart';
 import '../widgets/video_message_widget.dart';
+import 'status_viewer_screen.dart';
 
-/// شاشة الجروبات والحالات داخل تطبيق المراسلة.
-class CommunityFeaturesScreen extends StatefulWidget {
-  const CommunityFeaturesScreen({super.key});
+/// شاشة الحالات والجروبات داخل تطبيق المراسلة، بدون قسم مجتمع مستقل.
+class MessengerFeaturesScreen extends StatefulWidget {
+  const MessengerFeaturesScreen({super.key});
 
   @override
-  State<CommunityFeaturesScreen> createState() => _CommunityFeaturesScreenState();
+  State<MessengerFeaturesScreen> createState() => _MessengerFeaturesScreenState();
 }
 
-class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
+class _MessengerFeaturesScreenState extends State<MessengerFeaturesScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabs;
   final _groupName = TextEditingController();
@@ -108,13 +109,14 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
       uid: _uid,
       caller: true,
       type: type,
+      groupId: groupId,
     )));
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          title: const Text('الجروبات والحالات'),
+          title: const Text('Messenger'),
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           bottom: TabBar(
             controller: _tabs,
@@ -173,12 +175,17 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
           final values = <Map<String, dynamic>>[];
           final raw = snapshot.data?.snapshot.value;
           if (raw is Map) {
-            raw.forEach((_, value) {
+            raw.forEach((statusId, value) {
               if (value is Map) {
                 final status = Map<String, dynamic>.from(value);
+                status['id'] = statusId.toString();
                 final expiresAt = (status['expiresAt'] as num?)?.toInt() ?? 0;
                 final privacy = status['privacy']?.toString() ?? 'all';
                 final visible = privacy != 'only_me' || status['senderId']?.toString() == _uid;
+                if (expiresAt > 0 && expiresAt <= DateTime.now().millisecondsSinceEpoch) {
+                  FirebaseDatabase.instance.ref('statuses/${statusId.toString()}').remove();
+                  return;
+                }
                 if (visible && (expiresAt == 0 || expiresAt > DateTime.now().millisecondsSinceEpoch)) {
                   values.add(status);
                 }
@@ -193,17 +200,19 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
                 icon: const Icon(Icons.add_circle_outline),
                 label: const Text('إضافة حالة'),
               ),
-              ...values.reversed.map((status) => Card(
+              ...values.reversed.map((status) => TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 320),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, value, child) => Opacity(
+                      opacity: value,
+                      child: Transform.translate(offset: Offset(0, 18 * (1 - value)), child: child),
+                    ),
+                    child: Card(
                     child: ListTile(
                       onTap: () {
-                        final media = status['mediaBase64']?.toString() ?? '';
-                        if (media.isEmpty) return;
-                        showDialog<void>(context: context, builder: (_) => Dialog(
-                          backgroundColor: Colors.black,
-                          child: status['mediaType'] == 'video'
-                              ? VideoMessageWidget(id: 'status_${status['createdAt']}', base64: media, mine: false)
-                              : InteractiveViewer(child: Image.memory(base64Decode(media), fit: BoxFit.contain)),
-                        ));
+                        final ordered = values.reversed.toList();
+                        Navigator.push(context, PageRouteBuilder(pageBuilder: (_, __, ___) => StatusViewerScreen(statuses: ordered, initialIndex: ordered.indexOf(status)), transitionsBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: child)));
                       },
                       leading: const CircleAvatar(child: Icon(Icons.person)),
                       title: Text(status['senderName']?.toString() ?? ''),
@@ -213,6 +222,7 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
                           Padding(padding: const EdgeInsets.only(top: 8), child: Image.memory(base64Decode(status['mediaBase64'].toString()), height: 140, width: double.infinity, fit: BoxFit.cover)),
                         if (status['mediaType'] == 'video') const Padding(padding: EdgeInsets.only(top: 8), child: Icon(Icons.videocam, color: Color(0xFFE85C5C))),
                       ]),
+                    ),
                     ),
                   )),
             ],

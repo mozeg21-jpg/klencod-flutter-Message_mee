@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'audio_player_widget.dart';
 import 'video_message_widget.dart';
 
@@ -11,6 +12,7 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback onLongPress;
   final VoidCallback onSwipeLeft;
   final void Function(String emoji) onReact;
+  final void Function(String option) onPollVote;
 
   const MessageBubble({
     super.key,
@@ -20,6 +22,7 @@ class MessageBubble extends StatelessWidget {
     required this.onLongPress,
     required this.onSwipeLeft,
     required this.onReact,
+    required this.onPollVote,
   });
 
   @override
@@ -28,13 +31,40 @@ class MessageBubble extends StatelessWidget {
     final mediaType = (message['mediaType'] ?? '').toString();
     final mediaBase64 = (message['mediaBase64'] ?? '').toString();
     // رسائلي شمال، ورسائل باقي أعضاء الجروب يمين.
-    final bg = mine ? const Color(0xFFE85C5C) : Colors.white;
+    final bg = mine ? const Color(0xFF128C7E) : Colors.white;
     final textColor = mine ? Colors.white : const Color(0xFF111111);
     final time = DateTime.fromMillisecondsSinceEpoch(
         (message['time'] is num ? (message['time'] as num).toInt() : DateTime.now().millisecondsSinceEpoch));
 
     Widget content;
-    if (audio.isNotEmpty) {
+    if (message['deleted'] == true) {
+      content = Text('تم حذف هذه الرسالة', textDirection: TextDirection.rtl, style: TextStyle(color: textColor, fontStyle: FontStyle.italic));
+    } else if (message['type'] == 'location') {
+      content = Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.location_on, color: textColor), const SizedBox(width: 8), Text('موقع جغرافي', style: TextStyle(color: textColor))]);
+    } else if (message['type'] == 'contact') {
+      content = Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.contact_page, color: textColor), const SizedBox(width: 8), Text(message['contactName']?.toString() ?? 'جهة اتصال', style: TextStyle(color: textColor))]);
+    } else if (message['type'] == 'event') {
+      final date = DateTime.fromMillisecondsSinceEpoch((message['eventDate'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch);
+      content = Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.event, color: textColor), const SizedBox(width: 8), Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(message['eventTitle']?.toString() ?? 'حدث', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)), Text('${date.day}/${date.month}/${date.year}', style: TextStyle(color: textColor, fontSize: 12))])]);
+    } else if (message['type'] == 'document') {
+      content = Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.insert_drive_file, color: textColor), const SizedBox(width: 8), Flexible(child: Text(message['fileName']?.toString() ?? 'مستند', style: TextStyle(color: textColor)))]);
+    } else if (message['type'] == 'poll') {
+      content = _PollMessage(message: message, color: textColor, onVote: onPollVote);
+    } else if (message['type'] == 'call') {
+      final isVideo = message['callType']?.toString() == 'video';
+      final seconds = (message['duration'] as num?)?.toInt() ?? 0;
+      final minutes = seconds ~/ 60;
+      final remaining = seconds % 60;
+      content = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(isVideo ? Icons.videocam : Icons.call, color: textColor),
+        const SizedBox(width: 8),
+        Text(
+          '${isVideo ? 'مكالمة فيديو' : 'مكالمة صوتية'}\n${minutes}:${remaining.toString().padLeft(2, '0')}',
+          textDirection: TextDirection.rtl,
+          style: TextStyle(color: textColor),
+        ),
+      ]);
+    } else if (audio.isNotEmpty) {
       content = AudioPlayerWidget(
         id: (message['id'] ?? '').toString(),
         base64Audio: audio,
@@ -42,7 +72,7 @@ class MessageBubble extends StatelessWidget {
         duration: (message['audioDuration'] as num? ?? 0).toInt(),
         color: textColor,
       );
-    } else if (mediaType == 'image' && mediaBase64.isNotEmpty) {
+    } else if ((mediaType == 'image' || mediaType == 'sticker' || mediaType == 'gif') && mediaBase64.isNotEmpty) {
       content = _ImageMessage(base64: mediaBase64, mine: mine);
     } else if (mediaType == 'video' && mediaBase64.isNotEmpty) {
       content = VideoMessageWidget(id: (message['id'] ?? 'm').toString(), base64: mediaBase64, mine: mine);
@@ -125,9 +155,32 @@ class MessageBubble extends StatelessWidget {
                     onReact: onReact,
                   ),
                 ),
+              if (message['starred'] == true)
+                const Align(alignment: Alignment.centerLeft, child: Icon(Icons.star, color: Colors.amber, size: 14)),
+              if (message['pinned'] == true)
+                const Align(alignment: Alignment.centerLeft, child: Icon(Icons.push_pin, size: 14)),
               const SizedBox(height: 2),
-              Text('${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
-                  style: TextStyle(color: mine ? Colors.white70 : Colors.grey, fontSize: 10)),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Text('${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                    style: TextStyle(color: mine ? Colors.white70 : Colors.grey, fontSize: 10)),
+                if (mine) ...[
+                  const SizedBox(width: 4),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 240),
+                    transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+                    child: Icon(
+                      (message['status']?.toString() == 'read' || (message['readBy'] is Map && (message['readBy'] as Map).isNotEmpty))
+                          ? Icons.done_all
+                          : Icons.done,
+                      key: ValueKey('${message['status']}_${message['readBy']}'),
+                      size: 14,
+                      color: (message['status']?.toString() == 'read' || (message['readBy'] is Map && (message['readBy'] as Map).isNotEmpty))
+                          ? const Color(0xFF53BDEB)
+                          : Colors.white70,
+                    ),
+                  ),
+                ],
+              ]),
             ]),
           ),
         ),
@@ -238,7 +291,12 @@ class _ReactionRow extends StatelessWidget {
         final chosen = reactions[_reactionKey(myUid)] == e.key || reactions[myUid] == e.key;
         return GestureDetector(
           onTap: () => onReact(e.key),
-          child: Container(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: .72, end: 1),
+            duration: const Duration(milliseconds: 320),
+            curve: Curves.elasticOut,
+            builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
+            child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
               color: mine ? Colors.white24 : const Color(0xFFFFECEC),
@@ -251,10 +309,31 @@ class _ReactionRow extends StatelessWidget {
               Text('${e.value}',
                   style: TextStyle(fontSize: 10, color: mine ? Colors.white70 : Colors.grey)),
             ]),
+            ),
           ),
         );
       }).toList(),
     );
+  }
+}
+
+class _PollMessage extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final Color color;
+  final void Function(String option) onVote;
+  const _PollMessage({required this.message, required this.color, required this.onVote});
+
+  @override
+  Widget build(BuildContext context) {
+    final options = message['options'] is List ? (message['options'] as List).map((e) => e.toString()).toList() : <String>[];
+    final votes = message['votes'] is Map ? Map<String, dynamic>.from(message['votes']) : <String, dynamic>{};
+    final counts = <String, int>{for (final option in options) option: 0};
+    for (final vote in votes.values) { final option = vote.toString(); if (counts.containsKey(option)) counts[option] = counts[option]! + 1; }
+    final total = counts.values.fold<int>(0, (sum, value) => sum + value);
+    return Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+      Text(message['question']?.toString() ?? 'استطلاع', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+      ...options.map((option) { final ratio = total == 0 ? 0.0 : counts[option]! / total; return GestureDetector(onTap: () => onVote(option), child: Container(width: 220, margin: const EdgeInsets.only(top: 7), padding: const EdgeInsets.all(8), decoration: BoxDecoration(border: Border.all(color: color.withOpacity(.35)), borderRadius: BorderRadius.circular(10)), child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Text(option, textDirection: TextDirection.rtl, style: TextStyle(color: color)), const SizedBox(height: 4), TweenAnimationBuilder<double>(tween: Tween(begin: 0, end: ratio), duration: const Duration(milliseconds: 280), builder: (_, value, __) => LinearProgressIndicator(value: value, color: const Color(0xFF25D366), backgroundColor: color.withOpacity(.15)),), Text('${(ratio * 100).round()}%', style: TextStyle(color: color, fontSize: 10))]))); }),
+    ]);
   }
 }
 
@@ -296,6 +375,8 @@ class _ImageMessageState extends State<_ImageMessage> {
     if (bytes == null) return;
     Navigator.of(context).push(PageRouteBuilder(
       opaque: true,
+      transitionDuration: const Duration(milliseconds: 300),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: child),
       pageBuilder: (_, __, ___) => Scaffold(
         backgroundColor: Colors.black,
         appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
@@ -303,7 +384,7 @@ class _ImageMessageState extends State<_ImageMessage> {
           child: InteractiveViewer(
             minScale: 0.8,
             maxScale: 4,
-            child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+          child: Hero(tag: 'image_${widget.hashCode}', child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true)),
           ),
         ),
       ),
@@ -326,7 +407,7 @@ class _ImageMessageState extends State<_ImageMessage> {
         borderRadius: BorderRadius.circular(13),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 240, maxHeight: 220),
-          child: Image.memory(_bytes!, fit: BoxFit.cover, gaplessPlayback: true),
+          child: Hero(tag: 'image_${widget.hashCode}', child: Image.memory(_bytes!, fit: BoxFit.cover, gaplessPlayback: true)),
         ),
       ),
     );

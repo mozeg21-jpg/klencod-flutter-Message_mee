@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/device_uid.dart';
-import 'chat_screen.dart';
+import '../utils/firebase_paths.dart';
+import 'whatsapp_home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -12,8 +13,6 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  final _username = TextEditingController();
-  final _displayName = TextEditingController();
   final _phone = TextEditingController();
   final _picker = ImagePicker();
   String _uid = '...';
@@ -24,7 +23,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void initState() { super.initState(); _loadUid(); }
   Future<void> _loadUid() async { try { final id = await DeviceUid.get(); if (mounted) setState(() => _uid = id); } catch (_) {} }
   @override
-  void dispose() { _username.dispose(); _displayName.dispose(); _phone.dispose(); super.dispose(); }
+  void dispose() { _phone.dispose(); super.dispose(); }
 
   Future<void> _pickProfilePhoto() async {
     try {
@@ -47,18 +46,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _continue() async {
-    final username = _username.text.trim().toLowerCase();
-    final displayName = _displayName.text.trim();
     final phone = _phone.text.trim().replaceAll(RegExp(r'[^0-9+]'), '');
-    final valid = RegExp(r'^@[a-z0-9_]{3,20}$').hasMatch(username);
-    if (!valid) {
-      _toast('اكتب يوزر صحيح مثل @ajdd1 (حروف إنجليزية وأرقام فقط)');
-      return;
-    }
-    if (displayName.length < 2 || displayName.length > 30) {
-      _toast('اكتب اسم الظهور من حرفين إلى 30 حرفًا');
-      return;
-    }
     if (!RegExp(r'^\+?[0-9]{7,15}$').hasMatch(phone)) {
       _toast('اكتب رقم هاتف صحيحًا من 7 إلى 15 رقمًا');
       return;
@@ -70,47 +58,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final normalized = username.substring(1);
-      final usernameRef = FirebaseDatabase.instance.ref('usernames/$normalized');
-      final result = await usernameRef.runTransaction((current) {
-        if (current == null) return Transaction.success(_uid);
-        if (current.toString() == _uid) return Transaction.success(_uid);
-        return Transaction.abort();
-      });
-      if (!result.committed) {
-        _toast('هذا اليوزر مستخدم بالفعل');
-        return;
-      }
+      final generatedUsername = '@u_${_uid.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_')}';
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', _uid);
-      await prefs.setString('name', displayName);
-      await prefs.setString('username', username);
+      await prefs.setString('name', phone);
+      await prefs.setString('username', generatedUsername);
       await prefs.setString('phone', phone);
       if (_photoBase64 != null) await prefs.setString('photoBase64', _photoBase64!);
       await prefs.setBool('show_id', false);
-      await FirebaseDatabase.instance.ref('users/$_uid').update({
-        'name': displayName,
-        'username': username,
+      await FirebaseDatabase.instance.ref(FirebasePaths.user(_uid)).update({
+        'name': phone,
+        'username': generatedUsername,
         'phone': phone,
         'showId': false,
         'createdAt': ServerValue.timestamp,
         if (_photoBase64 != null) 'photoBase64': _photoBase64,
       });
     } catch (e) {
-      _toast('تعذر حفظ اليوزر: $e');
+      _toast('تعذر حفظ بيانات الحساب: $e');
       return;
     } finally {
       if (mounted) setState(() => _busy = false);
     }
     if (!mounted) return;
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const WhatsappHomeScreen()));
   }
 
   void _toast(String text) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text, textDirection: TextDirection.rtl)));
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFFFFF8F8),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: SafeArea(
           child: SingleChildScrollView(
             child: Column(
@@ -119,7 +97,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.fromLTRB(24, 35, 24, 72),
                   decoration: const BoxDecoration(
-                    gradient: LinearGradient(colors: [Color(0xFFF27878), Color(0xFFE85C5C)]),
+                    gradient: const LinearGradient(colors: [Color(0xFF128C7E), Color(0xFF075E54)]),
                     borderRadius: BorderRadius.vertical(bottom: Radius.circular(40)),
                   ),
                   child: Column(
@@ -137,7 +115,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                       const SizedBox(height: 18),
                       const Text(
-                        'Welcome to Ahmed Saad Community',
+                        'Welcome to Ahmed Messenger',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Color(0xFF111111), fontSize: 24, fontWeight: FontWeight.bold),
                       ),
@@ -170,24 +148,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const SizedBox(height: 12),
                           const Text('صورة الملف الشخصي', textDirection: TextDirection.rtl),
                           const SizedBox(height: 16),
-                          _label('Username'),
-                          TextField(
-                            controller: _username,
-                            maxLength: 21,
-                            textDirection: TextDirection.ltr,
-                            decoration: _decoration('@ajdd1'),
-                          ),
-                          const SizedBox(height: 16),
-                          _label('اسم الظهور'),
-                          TextField(
-                            controller: _displayName,
-                            maxLength: 30,
-                            textDirection: TextDirection.rtl,
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (_) => _continue(),
-                            decoration: _decoration('اكتب اسمك الذي سيظهر للناس'),
-                          ),
-                          const SizedBox(height: 16),
                           _label('رقم الهاتف'),
                           TextField(
                             controller: _phone,
@@ -199,7 +159,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           const Align(
                             alignment: Alignment.centerRight,
                             child: Text(
-                              'استخدم @ ثم حروف إنجليزية أو أرقام أو _ فقط',
+                              'اكتب رقم الهاتف فقط، بدون OTP أو رسالة SMS',
                               textDirection: TextDirection.rtl,
                               style: TextStyle(color: Color(0xFF9A8A8A), fontSize: 12),
                             ),
@@ -211,11 +171,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             child: ElevatedButton(
                               onPressed: _busy ? null : _continue,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF111111),
+                                backgroundColor: Theme.of(context).colorScheme.primary,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
                               ),
-                              child: Text(_busy ? 'جاري الحفظ...' : 'Continue'),
+                              child: Text(_busy ? 'جاري الدخول...' : 'دخول مباشر'),
                             ),
                           ),
                         ],

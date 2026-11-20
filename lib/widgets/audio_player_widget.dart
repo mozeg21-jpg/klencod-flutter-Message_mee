@@ -126,7 +126,12 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
         GestureDetector(
           onTap: _toggle,
-          child: Container(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: 1, end: _playing ? 1.08 : 1),
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutBack,
+            builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
+            child: Container(
             width: 34,
             height: 34,
             decoration: BoxDecoration(
@@ -148,6 +153,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
                     color: const Color(0xFFE85C5C),
                     size: 20,
                   ),
+            ),
           ),
         ),
         const SizedBox(width: 8),

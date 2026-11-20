@@ -10,6 +10,7 @@ class CallService {
     required String type,
     String? targetId,
     String? groupId,
+    String? conversationId,
   }) async {
     final ref = _root.push();
     await ref.set({
@@ -17,6 +18,7 @@ class CallService {
       'callerName': callerName,
       'targetId': targetId,
       'groupId': groupId,
+      'conversationId': conversationId,
       'type': type,
       'status': 'ringing',
       'participants': {callerId: true},

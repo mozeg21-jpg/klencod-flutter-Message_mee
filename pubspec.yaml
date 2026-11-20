@@ -1,5 +1,5 @@
-name: ahmed_saad_community
-description: Ahmed Saad Community chat with offline Base64 voice/image/video messages.
+name: ahmed_messenger
+description: Ahmed Messenger chat with voice, image, video and group messaging.
 publish_to: 'none'
 version: 1.0.0+1
 environment:
@@ -19,6 +19,7 @@ dependencies:
   permission_handler: ^11.3.1
   # اختيار الصور والفيديوهات من المعرض
   image_picker: ^1.1.2
+  file_picker: ^8.1.7
   # تشغيل الفيديوهات داخل فقاعة الرسالة
   video_player: ^2.9.2
   # إشعارات محلية للرسائل الجديدة والردود
@@ -29,6 +30,9 @@ dependencies:
   flutter_webrtc: ^1.6.3
   # قراءة جهات اتصال الهاتف بعد طلب الإذن
   flutter_contacts: ^1.1.9+2
+  geolocator: ^13.0.2
+  url_launcher: ^6.3.1
+  open_filex: ^4.5.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

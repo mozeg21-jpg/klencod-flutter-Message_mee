@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'register_screen.dart';
-import 'chat_screen.dart';
+import 'whatsapp_home_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -39,7 +39,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         transitionDuration: const Duration(milliseconds: 450),
         pageBuilder: (_, a, __) => FadeTransition(
           opacity: a,
-          child: registered ? const ChatScreen() : const RegisterScreen(),
+          child: registered ? const WhatsappHomeScreen() : const RegisterScreen(),
         ),
       ),
     );
@@ -58,7 +58,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
         body: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFFF27878), Color(0xFFE85C5C), Color(0xFFC94444)],
+              colors: [Color(0xFF128C7E), Color(0xFF075E54), Color(0xFF054C44)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
             ),
@@ -111,7 +111,7 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => const Center(
                             child: Text('A',
-                                style: TextStyle(color: Color(0xFFE85C5C), fontSize: 60, fontWeight: FontWeight.bold)),
+                                style: TextStyle(color: Color(0xFF25D366), fontSize: 60, fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ),
@@ -128,13 +128,13 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
                       mainAxisSize: MainAxisSize.min,
                       children: const [
                         Text(
-                          'Ahmed Saad Community',
+                          'Ahmed Messenger',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold, letterSpacing: 0.3),
                         ),
                         SizedBox(height: 6),
                         Text(
-                          'مجتمعك .. صوت وصورة وفيديو في مكان واحد',
+                          'رسائلك ومكالماتك وحالاتك في مكان واحد',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: Colors.white70, fontSize: 13),
                         ),

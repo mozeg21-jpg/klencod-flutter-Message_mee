@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,9 +18,14 @@ import 'contacts_screen.dart';
 import 'call_screen.dart';
 import '../utils/call_service.dart';
 import '../widgets/message_bubble.dart';
+import '../utils/firebase_paths.dart';
+import 'chat_info_screen.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final String? conversationId;
+  final String? peerId;
+  final String? peerName;
+  const ChatScreen({super.key, this.conversationId, this.peerId, this.peerName});
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -35,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _reply;
   String _uid = '', _name = '', _username = '';
   bool _recording = false, _recorderReady = false, _sending = false;
+  bool _readReceipts = true;
   int _seconds = 0;
   final List<double> _levels = [];
   Timer? _timer;
@@ -52,6 +61,17 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   static const List<String> kReactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
   final Set<String> _notified = {};
   bool _initialLoad = true;
+  int _disappearingSeconds = 0;
+  String _messageQuery = '';
+  bool _messageSearch = false;
+
+  DatabaseReference get _messagesRef => widget.conversationId == null || widget.conversationId!.isEmpty
+      ? FirebaseDatabase.instance.ref('messages')
+      : FirebaseDatabase.instance.ref(FirebasePaths.conversationMessages(widget.conversationId!));
+
+  List<Map<String, dynamic>> get _visibleMessages => _messageQuery.isEmpty
+      ? _messages
+      : _messages.where((m) => '${m['text'] ?? ''} ${m['senderName'] ?? ''} ${m['fileName'] ?? ''}'.toLowerCase().contains(_messageQuery.toLowerCase())).toList();
 
   @override
   void initState() {
@@ -71,6 +91,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _name = p.getString('name') ?? '';
     _username = p.getString('username') ?? '';
     try {
+      final setting = await FirebaseDatabase.instance.ref('${FirebasePaths.user(_uid)}/settings/readReceipts').get();
+      if (setting.value is bool) _readReceipts = setting.value as bool;
+    } catch (_) {}
+    if (widget.conversationId != null) {
+      final setting = await FirebaseDatabase.instance.ref('${FirebasePaths.conversation(widget.conversationId!)}/settings/disappearing').get();
+      final value = setting.value?.toString();
+      _disappearingSeconds = value == '24h' ? 86400 : value == '7d' ? 604800 : value == '90d' ? 7776000 : 0;
+    }
+    try {
       await _recorder.openRecorder();
       await _recorder.setSubscriptionDuration(const Duration(milliseconds: 100));
       _recorderReady = true;
@@ -87,11 +116,35 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     } catch (_) {}
     try {
-      _subscription = FirebaseDatabase.instance.ref('messages').limitToLast(100).onValue.listen(_readMessages);
+    _subscription = _messagesRef.limitToLast(100).onValue.listen(_readMessages);
+    await _markConversationRead();
       _incomingCallSubscription = FirebaseDatabase.instance.ref('calls')
           .orderByChild('targetId').equalTo(_uid).onChildAdded.listen(_incomingCall);
     } catch (_) {}
     if (mounted) setState(() {});
+  }
+
+  Future<void> _markConversationRead() async {
+    final conversationId = widget.conversationId;
+    if (conversationId == null || conversationId.isEmpty || _uid.isEmpty) return;
+    try {
+      await FirebaseDatabase.instance.ref('${FirebasePaths.userChats(_uid)}/$conversationId/unread').set(0);
+      final snapshot = await _messagesRef.get();
+      final value = snapshot.value;
+      if (value is! Map) return;
+      final updates = <String, dynamic>{};
+      value.forEach((id, raw) {
+        if (raw is Map && raw['senderId']?.toString() != _uid) {
+          if (_readReceipts) {
+            updates['$id/readBy/${FirebasePaths.safeSegment(_uid)}'] = true;
+            updates['$id/status'] = 'read';
+          }
+        }
+      });
+      if (updates.isNotEmpty) await _messagesRef.update(updates);
+    } catch (_) {
+      // قراءة الرسائل لا يجب أن تمنع فتح المحادثة عند انقطاع الشبكة.
+    }
   }
 
   Future<void> _incomingCall(DatabaseEvent event) async {
@@ -117,7 +170,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     if (accept == true) {
       await CallService.updateStatus(id, 'accepted');
-      Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(callId: id, uid: _uid, caller: false, type: data['type']?.toString() ?? 'audio')));
+      Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(
+        callId: id,
+        uid: _uid,
+        caller: false,
+        type: data['type']?.toString() ?? 'audio',
+        conversationId: data['conversationId']?.toString() ?? widget.conversationId,
+      )));
     } else {
       await CallService.updateStatus(id, 'declined');
     }
@@ -130,6 +189,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     value.forEach((key, val) {
       if (val is Map) {
         final m = Map<String, dynamic>.from(val);
+        final expiresAt = (m['expiresAt'] as num?)?.toInt();
+        if (expiresAt != null && expiresAt > 0 && expiresAt <= DateTime.now().millisecondsSinceEpoch) {
+          _messagesRef.child(key.toString()).remove();
+          return;
+        }
         m['id'] = key.toString();
         list.add(m);
       }
@@ -156,6 +220,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ..addAll(list);
       });
     }
+    _markDelivered(list);
+  }
+
+  Future<void> _markDelivered(List<Map<String, dynamic>> messages) async {
+    if (_uid.isEmpty) return;
+    final updates = <String, dynamic>{};
+    for (final message in messages) {
+      final id = message['id']?.toString();
+      if (id != null && id.isNotEmpty && message['senderId']?.toString() != _uid && message['status']?.toString() == 'sent') {
+        updates['$id/status'] = 'delivered';
+      }
+    }
+    if (updates.isNotEmpty) await _messagesRef.update(updates);
   }
 
   /// إشعار محلي برسالة واردة (نص/صوت/صورة/فيديو) مع تمييز الردود.
@@ -217,11 +294,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     };
   }
 
+  Future<void> _updateConversationPreview(String preview) async {
+    final conversationId = widget.conversationId;
+    final peerId = widget.peerId;
+    if (conversationId == null || conversationId.isEmpty || peerId == null || peerId.isEmpty || _uid.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final mine = FirebaseDatabase.instance.ref('${FirebasePaths.userChats(_uid)}/$conversationId');
+    final theirs = FirebaseDatabase.instance.ref('${FirebasePaths.userChats(FirebasePaths.safeSegment(peerId))}/$conversationId');
+    await mine.update({'lastMessage': preview, 'updatedAt': now, 'unread': 0});
+    await theirs.update({'lastMessage': preview, 'updatedAt': now});
+    await theirs.child('unread').runTransaction((current) {
+      final count = current is num ? current.toInt() : int.tryParse('$current') ?? 0;
+      return Transaction.success(count + 1);
+    });
+  }
+
   /// إضافة/إزالة تفاعل رمز تعبيري على رسالة (مخزن في messages/$id/reactions/$uid).
   Future<void> _react(Map<String, dynamic> m, String emoji) async {
     final id = m['id'].toString();
     final key = _reactionKey(_uid);
-    final ref = FirebaseDatabase.instance.ref('messages/$id/reactions');
+    final ref = _messagesRef.child('$id/reactions');
     try {
       // اقرأ القيمة الحالية من Firebase بدل الاعتماد على نسخة الرسالة
       // القديمة الموجودة في الواجهة.
@@ -241,6 +333,37 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (e) {
       _toast('تعذر تعديل التفاعل: ${_shortError(e)}');
     }
+  }
+
+  Future<void> _setMessageFlag(Map<String, dynamic> message, String field, dynamic value) async {
+    final id = message['id']?.toString();
+    if (id == null || id.isEmpty) return;
+    try {
+      await _messagesRef.child(id).update({field: value});
+    } catch (e) {
+      _toast('تعذر تحديث الرسالة: ${_shortError(e)}');
+    }
+  }
+
+  Future<void> _votePoll(Map<String, dynamic> message, String option) async {
+    final id = message['id']?.toString();
+    if (id == null || id.isEmpty || _uid.isEmpty) return;
+    await _messagesRef.child('$id/votes/${FirebasePaths.safeSegment(_uid)}').set(option);
+  }
+
+  Future<void> _forwardMessage(Map<String, dynamic> message) async {
+    if (_uid.isEmpty) return;
+    final snapshot = await FirebaseDatabase.instance.ref(FirebasePaths.userChats(_uid)).get();
+    final rows = <Map<String, dynamic>>[];
+    if (snapshot.value is Map) (snapshot.value as Map).forEach((id, value) { if (value is Map && id.toString() != widget.conversationId) rows.add({...Map<String, dynamic>.from(value), 'id': id.toString()}); });
+    if (!mounted || rows.isEmpty) { _toast('لا توجد محادثات لإعادة التوجيه'); return; }
+    final selected = await showModalBottomSheet<Map<String, dynamic>>(context: context, builder: (_) => ListView(children: rows.map((row) => ListTile(leading: const CircleAvatar(child: Icon(Icons.person)), title: Text(row['name']?.toString() ?? 'محادثة'), onTap: () => Navigator.pop(context, row))).toList()));
+    if (selected == null) return;
+    final target = selected['id'].toString();
+    final copy = Map<String, dynamic>.from(message)..remove('id')..['senderId'] = _uid..['senderName'] = _name..['forwarded'] = true..['time'] = ServerValue.timestamp..['status'] = 'sent';
+    await FirebaseDatabase.instance.ref(FirebasePaths.conversationMessages(target)).push().set(copy);
+    await FirebaseDatabase.instance.ref('${FirebasePaths.userChats(target)}/lastMessage').set('رسالة معاد توجيهها');
+    await FirebaseDatabase.instance.ref('${FirebasePaths.userChats(target)}/updatedAt').set(ServerValue.timestamp);
   }
 
   // Realtime Database يمنع هذه الرموز داخل أسماء العقد.
@@ -296,6 +419,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 _toast('تم نسخ الرسالة');
               },
             ),
+          ListTile(
+            leading: Icon(m['starred'] == true ? Icons.star : Icons.star_border, color: Colors.amber),
+            title: Text(m['starred'] == true ? 'إزالة النجمة' : 'إضافة نجمة', textDirection: TextDirection.rtl),
+            onTap: () { _setMessageFlag(m, 'starred', m['starred'] != true); Navigator.pop(sheetCtx); },
+          ),
+          ListTile(
+            leading: Icon(m['pinned'] == true ? Icons.push_pin : Icons.push_pin_outlined),
+            title: Text(m['pinned'] == true ? 'إلغاء التثبيت' : 'تثبيت الرسالة', textDirection: TextDirection.rtl),
+            onTap: () { _setMessageFlag(m, 'pinned', m['pinned'] != true); Navigator.pop(sheetCtx); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text('حذف عند الجميع', textDirection: TextDirection.rtl),
+            onTap: () { _setMessageFlag(m, 'deleted', true); Navigator.pop(sheetCtx); },
+          ),
+          ListTile(
+            leading: const Icon(Icons.forward),
+            title: const Text('إعادة توجيه', textDirection: TextDirection.rtl),
+            onTap: () { Navigator.pop(sheetCtx); _forwardMessage(m); },
+          ),
           const SizedBox(height: 8),
         ]),
       ),
@@ -314,11 +457,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       'text': text,
       'senderId': _uid,
       'senderName': _name.trim(),
+      'status': 'sent',
+      if (_disappearingSeconds > 0) 'expiresAt': DateTime.now().add(Duration(seconds: _disappearingSeconds)).millisecondsSinceEpoch,
       'time': ServerValue.timestamp,
     };
     if (_reply != null) data['replyTo'] = _replyPayload();
     try {
-      await FirebaseDatabase.instance.ref('messages').push().set(data);
+      await _messagesRef.push().set(data);
+      await _updateConversationPreview(text);
       _input.clear();
       if (mounted) setState(() => _reply = null);
     } catch (e) {
@@ -326,6 +472,104 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _createPoll() async {
+    final question = TextEditingController();
+    final options = [TextEditingController(), TextEditingController()];
+    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(title: const Text('استطلاع جديد'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: question, decoration: const InputDecoration(hintText: 'السؤال')), ...options.map((c) => TextField(controller: c, decoration: const InputDecoration(hintText: 'اختيار')))]), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إرسال'))]));
+    if (ok != true || question.text.trim().isEmpty) return;
+    final values = options.map((c) => c.text.trim()).where((v) => v.isNotEmpty).toList();
+    if (values.length < 2) return;
+    await _messagesRef.push().set({'type': 'poll', 'question': question.text.trim(), 'options': values, 'votes': {}, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('استطلاع');
+    question.dispose(); for (final c in options) c.dispose();
+  }
+
+  Future<void> _createEvent() async {
+    final title = TextEditingController();
+    final date = await showDatePicker(context: context, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)), initialDate: DateTime.now().add(const Duration(days: 1)));
+    if (date == null || !mounted) return;
+    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(title: const Text('حدث جديد'), content: TextField(controller: title, decoration: const InputDecoration(hintText: 'اسم الحدث')), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إرسال'))]));
+    if (ok != true || title.text.trim().isEmpty) return;
+    await _messagesRef.push().set({'type': 'event', 'eventTitle': title.text.trim(), 'eventDate': date.millisecondsSinceEpoch, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('حدث');
+    title.dispose();
+  }
+
+  Future<void> _showAttachmentMenu() async {
+    await showModalBottomSheet<void>(context: context, builder: (_) => SafeArea(child: Wrap(children: [
+      ListTile(leading: const Icon(Icons.description), title: const Text('مستند'), onTap: () { Navigator.pop(context); _pickDocument(); }),
+      ListTile(leading: const Icon(Icons.camera_alt), title: const Text('الكاميرا'), onTap: () { Navigator.pop(context); _takePhoto(); }),
+      ListTile(leading: const Icon(Icons.emoji_emotions), title: const Text('ملصق من صورة'), onTap: () { Navigator.pop(context); _sendSticker(); }),
+      ListTile(leading: const Icon(Icons.gif_box), title: const Text('GIF'), onTap: () { Navigator.pop(context); _sendGif(); }),
+      ListTile(leading: const Icon(Icons.location_on), title: const Text('الموقع'), onTap: () { Navigator.pop(context); _sendLocation(); }),
+      ListTile(leading: const Icon(Icons.poll), title: const Text('استطلاع'), onTap: () { Navigator.pop(context); _createPoll(); }),
+      ListTile(leading: const Icon(Icons.event), title: const Text('حدث'), onTap: () { Navigator.pop(context); _createEvent(); }),
+      ListTile(leading: const Icon(Icons.contact_page), title: const Text('جهة اتصال'), onTap: () { Navigator.pop(context); _sendContact(); }),
+    ])));
+  }
+
+  Future<void> _showEmojiPanel() async {
+    const emojis = ['😀', '😂', '😍', '🥰', '😎', '😭', '😡', '😮', '👍', '👎', '👏', '🙏', '❤️', '🔥', '🎉', '🥳', '✅', '✨', '💯', '😴', '🤔', '🙌', '💔', '🤣'];
+    final emoji = await showModalBottomSheet<String>(context: context, builder: (_) => GridView.count(crossAxisCount: 6, padding: const EdgeInsets.all(14), shrinkWrap: true, children: emojis.map((e) => InkWell(onTap: () => Navigator.pop(context, e), child: Center(child: Text(e, style: const TextStyle(fontSize: 28))))).toList()));
+    if (emoji != null && mounted) { final value = _input.text; final selection = _input.selection; final start = selection.start < 0 ? value.length : selection.start; _input.text = value.replaceRange(start, start, emoji); _input.selection = TextSelection.collapsed(offset: start + emoji.length); setState(() {}); }
+  }
+
+  Future<void> _sendLocation() async {
+    if (!await Geolocator.isLocationServiceEnabled()) { _toast('فعّل خدمة الموقع أولًا'); return; }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) { _toast('اسمح للتطبيق بالوصول إلى الموقع'); return; }
+    final position = await Geolocator.getCurrentPosition();
+    await _messagesRef.push().set({'type': 'location', 'latitude': position.latitude, 'longitude': position.longitude, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('موقع');
+  }
+
+  Future<void> _sendContact() async {
+    if (!await FlutterContacts.requestPermission()) { _toast('اسمح للتطبيق بجهات الاتصال'); return; }
+    final contacts = await FlutterContacts.getContacts(withProperties: true);
+    if (!mounted || contacts.isEmpty) return;
+    final selected = await showModalBottomSheet<Contact>(context: context, builder: (_) => ListView(children: contacts.take(40).map((c) => ListTile(title: Text(c.displayName), subtitle: Text(c.phones.isEmpty ? '' : c.phones.first.number), onTap: () => Navigator.pop(context, c))).toList()));
+    if (selected == null) return;
+    await _messagesRef.push().set({'type': 'contact', 'contactName': selected.displayName, 'contactPhone': selected.phones.isEmpty ? '' : selected.phones.first.number, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('جهة اتصال');
+  }
+
+  Future<void> _pickDocument() async {
+    final result = await FilePicker.platform.pickFiles(withData: true, type: FileType.any);
+    final file = result?.files.single;
+    if (file == null || file.bytes == null || file.bytes!.length > 6 * 1024 * 1024) { if (file != null) _toast('الملف يجب أن يكون أقل من 6 ميجابايت'); return; }
+    await _messagesRef.push().set({'type': 'document', 'fileName': file.name, 'fileSize': file.size, 'fileBase64': base64Encode(file.bytes!), 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('مستند');
+  }
+
+  Future<void> _takePhoto() async {
+    if (_sending) return;
+    final file = await _picker.pickImage(source: ImageSource.camera, maxWidth: 1280, imageQuality: 75);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > _maxImageBytes) { _toast('الصورة أكبر من 4 ميجا'); return; }
+    await _messagesRef.push().set({'mediaType': 'image', 'mediaBase64': base64Encode(bytes), 'mediaName': file.name, 'mediaSize': bytes.length, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('صورة من الكاميرا');
+  }
+
+  Future<void> _sendSticker() async {
+    final file = await _picker.pickImage(source: ImageSource.gallery, maxWidth: 512, maxHeight: 512, imageQuality: 85);
+    if (file == null) return;
+    final bytes = await file.readAsBytes();
+    if (bytes.length > 1024 * 1024) { _toast('الملصق أكبر من 1 ميجا'); return; }
+    await _messagesRef.push().set({'type': 'sticker', 'mediaType': 'sticker', 'mediaBase64': base64Encode(bytes), 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('ملصق');
+  }
+
+  Future<void> _sendGif() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['gif'], withData: true);
+    final file = result?.files.single;
+    if (file == null || file.bytes == null) return;
+    if (file.bytes!.length > 4 * 1024 * 1024) { _toast('ملف GIF أكبر من 4 ميجا'); return; }
+    await _messagesRef.push().set({'type': 'gif', 'mediaType': 'gif', 'mediaBase64': base64Encode(file.bytes!), 'mediaName': file.name, 'senderId': _uid, 'senderName': _name, 'time': ServerValue.timestamp, 'status': 'sent'});
+    await _updateConversationPreview('GIF');
   }
 
   /// اختيار صورة أو فيديو من المعرض ثم إرسالهما بنفس فكرة الصوت:
@@ -364,10 +608,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         'mediaSize': bytes.lengthInBytes,
         'senderId': _uid,
         'senderName': _name.trim(),
+        'status': 'sent',
+        if (_disappearingSeconds > 0) 'expiresAt': DateTime.now().add(Duration(seconds: _disappearingSeconds)).millisecondsSinceEpoch,
         'time': ServerValue.timestamp,
       };
       if (_reply != null) data['replyTo'] = _replyPayload();
-      await FirebaseDatabase.instance.ref('messages').push().set(data);
+      await _messagesRef.push().set(data);
+      await _updateConversationPreview(isVideo ? 'فيديو' : 'صورة');
       if (mounted) setState(() => _reply = null);
     } catch (e) {
       _toast('تعذر إرسال الوسائط: ${_shortError(e)}');
@@ -486,10 +733,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         'waveform': _downsampleWaveform(_levels, _storedWaveBars),
         'senderId': _uid,
         'senderName': _name.trim(),
+        'status': 'sent',
+        if (_disappearingSeconds > 0) 'expiresAt': DateTime.now().add(Duration(seconds: _disappearingSeconds)).millisecondsSinceEpoch,
         'time': ServerValue.timestamp,
       };
       if (_reply != null) data['replyTo'] = _replyPayload();
-      await FirebaseDatabase.instance.ref('messages').push().set(data);
+      await _messagesRef.push().set(data);
+      await _updateConversationPreview('تسجيل صوتي');
       if (mounted) setState(() => _reply = null);
     } catch (e) {
       _toast('تعذر إرسال التسجيل: ${_shortError(e)}');
@@ -546,15 +796,21 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
-          title: const Text('المحادثات', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          title: _messageSearch
+              ? TextField(autofocus: true, textDirection: TextDirection.rtl, decoration: const InputDecoration(hintText: 'بحث في الرسائل', border: InputBorder.none), onChanged: (value) => setState(() => _messageQuery = value))
+              : GestureDetector(
+            onTap: widget.conversationId == null ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatInfoScreen(conversationId: widget.conversationId!, name: widget.peerName ?? 'المحادثة'))),
+            child: Text(widget.peerName ?? 'المحادثات', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          ),
           actions: [
+            IconButton(onPressed: () => setState(() { _messageSearch = !_messageSearch; if (!_messageSearch) _messageQuery = ''; }), icon: Icon(_messageSearch ? Icons.close : Icons.search)),
             IconButton(
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen())),
               icon: const Icon(Icons.contacts_outlined),
               tooltip: 'جهات الاتصال',
             ),
             IconButton(
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CommunityFeaturesScreen())),
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MessengerFeaturesScreen())),
               icon: const Icon(Icons.groups_2_outlined),
               tooltip: 'الجروبات والحالات',
             ),
@@ -572,9 +828,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   controller: _scroll,
                   reverse: false,
                   padding: const EdgeInsets.only(top: 12, bottom: 8),
-                  itemCount: _messages.length,
+                  itemCount: _visibleMessages.length,
                   itemBuilder: (_, i) {
-                    final m = _messages[i];
+                    final m = _visibleMessages[i];
                     return MessageBubble(
                       message: m,
                       mine: m['senderId'] == _uid,
@@ -582,6 +838,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       onLongPress: () => _openMessageActions(m),
                       onSwipeLeft: () => _replyTo(m),
                       onReact: (e) => _react(m, e),
+                      onPollVote: (option) => _votePoll(m, option),
                     );
                   },
                 ),
@@ -612,6 +869,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
           decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]),
           child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            _circleAction(Icons.emoji_emotions_outlined, _showEmojiPanel),
+            _circleAction(Icons.attach_file, _sending ? null : _showAttachmentMenu),
             _circleAction(Icons.image_outlined, _sending ? null : () => _pickMedia(isVideo: false)),
             _circleAction(Icons.videocam_outlined, _sending ? null : () => _pickMedia(isVideo: true)),
             _micOrSend(),
@@ -640,14 +899,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// زر دائري بخلفية وردية فاتحة (صورة / فيديو).
   Widget _circleAction(IconData icon, VoidCallback? onTap) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Material(
-          color: const Color(0xFFFFECEC),
-          shape: const CircleBorder(),
-          child: IconButton(
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
-            icon: Icon(icon, color: const Color(0xFFE85C5C), size: 22),
-            onPressed: onTap,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 1, end: onTap == null ? .72 : 1),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutBack,
+          builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
+          child: Material(
+            color: Theme.of(context).colorScheme.primaryContainer,
+            shape: const CircleBorder(),
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 38, minHeight: 38),
+              icon: Icon(icon, color: Theme.of(context).colorScheme.primary, size: 22),
+              onPressed: onTap,
+            ),
           ),
         ),
       );
@@ -655,8 +920,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   /// زر الميكروفون / الإرسال الدائري الأحمر.
   Widget _micOrSend() => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Material(
-          color: const Color(0xFFE85C5C),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 1, end: _sending ? .82 : 1),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutBack,
+          builder: (_, scale, child) => Transform.scale(scale: scale, child: child),
+          child: Material(
+          color: _recording ? Colors.red : Theme.of(context).colorScheme.primary,
           shape: const CircleBorder(),
           child: IconButton(
             padding: EdgeInsets.zero,
@@ -669,6 +939,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 : Icon(_input.text.trim().isEmpty ? Icons.mic : Icons.send,
                     color: Colors.white, size: 22),
             onPressed: _sending ? null : (_input.text.trim().isEmpty ? _startRecording : _sendText),
+          ),
           ),
         ),
       );
@@ -773,7 +1044,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       _username = username;
     });
     try {
-      await FirebaseDatabase.instance.ref('users/$_uid').update({'name': value, 'username': username});
+      await FirebaseDatabase.instance.ref(FirebasePaths.user(_uid)).update({'name': value, 'username': username});
     } catch (_) {}
     if (mounted) {
       _toast('تم تحديث الملف الشخصي');

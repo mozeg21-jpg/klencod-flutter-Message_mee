@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
 import 'notification_service.dart';
+import 'firebase_paths.dart';
 
 /// خدمة خلفية (Foreground Service) بتستمع لقاعدة الرسائل حتى والتطبيق
 /// مقفول، وتطلق إشعارًا محليًا بأي رسالة جديدة من مستخدم آخر.
@@ -25,7 +26,7 @@ class BackgroundNotificationService {
         autoStart: false,
         isForegroundMode: true,
         notificationChannelId: 'bg_messages',
-        initialNotificationTitle: 'إشعارات المجتمع مفعلة',
+      initialNotificationTitle: 'إشعارات Messenger مفعلة',
         initialNotificationContent: 'بتستلم الرسائل الجديدة حتى والتطبيق مقفول',
       ),
       iosConfiguration: IosConfiguration(autoStart: false),
@@ -93,6 +94,42 @@ class BackgroundNotificationService {
       }
       _persist(prefs, seen);
     });
+
+    // المحادثات الجديدة تستخدم userChats/{uid} بدل المسار القديم messages.
+    if (myUid.isNotEmpty) {
+      var firstChatsSnapshot = true;
+      FirebaseDatabase.instance.ref(FirebasePaths.userChats(myUid)).onValue.listen((event) {
+        final value = event.snapshot.value;
+        if (value is! Map) return;
+        final current = <MapEntry<String, Map<String, dynamic>>>[];
+        value.forEach((key, raw) {
+          if (raw is Map) current.add(MapEntry(key.toString(), Map<String, dynamic>.from(raw)));
+        });
+        if (firstChatsSnapshot) {
+          firstChatsSnapshot = false;
+          for (final entry in current) {
+            final stamp = entry.value['updatedAt']?.toString() ?? '';
+            seen.add('chat:${entry.key}:$stamp');
+          }
+          _persist(prefs, seen);
+          return;
+        }
+        for (final entry in current) {
+          final chat = entry.value;
+          final unread = chat['unread'] is num ? (chat['unread'] as num).toInt() : int.tryParse('${chat['unread']}') ?? 0;
+          final stamp = chat['updatedAt']?.toString() ?? '';
+          final id = 'chat:${entry.key}:$stamp';
+          if (stamp.isEmpty || seen.contains(id) || unread <= 0) continue;
+          seen.add(id);
+          NotificationService.show(
+            title: (chat['name'] ?? 'رسالة جديدة').toString(),
+            body: (chat['lastMessage'] ?? 'رسالة جديدة').toString(),
+            id: id.hashCode,
+          );
+        }
+        _persist(prefs, seen);
+      });
+    }
   }
 
   static void _persist(SharedPreferences prefs, Set<String> seen) {

@@ -23,7 +23,7 @@ elif [ ! -s android/app/release-key.jks ]; then
 fi
 
 echo "🎨 3/4) توليد أيقونة التطبيق..."
-dart run flutter_launcher_icons || true
+dart run flutter_launcher_icons
 
 echo "📦 4/4) بناء نسخة الإفراج الموقّعة..."
 flutter build apk --release
