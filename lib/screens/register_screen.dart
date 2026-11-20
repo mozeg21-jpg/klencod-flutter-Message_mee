@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/device_uid.dart';
 import 'chat_screen.dart';
@@ -12,18 +14,42 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final _username = TextEditingController();
   final _displayName = TextEditingController();
+  final _phone = TextEditingController();
+  final _picker = ImagePicker();
   String _uid = '...';
+  String? _photoBase64;
   bool _busy = false;
 
   @override
   void initState() { super.initState(); _loadUid(); }
   Future<void> _loadUid() async { try { final id = await DeviceUid.get(); if (mounted) setState(() => _uid = id); } catch (_) {} }
   @override
-  void dispose() { _username.dispose(); _displayName.dispose(); super.dispose(); }
+  void dispose() { _username.dispose(); _displayName.dispose(); _phone.dispose(); super.dispose(); }
+
+  Future<void> _pickProfilePhoto() async {
+    try {
+      final image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 75,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (bytes.length > 700 * 1024) {
+        _toast('اختر صورة أصغر من 700 كيلوبايت');
+        return;
+      }
+      if (mounted) setState(() => _photoBase64 = base64Encode(bytes));
+    } catch (e) {
+      _toast('تعذر اختيار صورة الملف الشخصي');
+    }
+  }
 
   Future<void> _continue() async {
     final username = _username.text.trim().toLowerCase();
     final displayName = _displayName.text.trim();
+    final phone = _phone.text.trim().replaceAll(RegExp(r'[^0-9+]'), '');
     final valid = RegExp(r'^@[a-z0-9_]{3,20}$').hasMatch(username);
     if (!valid) {
       _toast('اكتب يوزر صحيح مثل @ajdd1 (حروف إنجليزية وأرقام فقط)');
@@ -31,6 +57,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
     if (displayName.length < 2 || displayName.length > 30) {
       _toast('اكتب اسم الظهور من حرفين إلى 30 حرفًا');
+      return;
+    }
+    if (!RegExp(r'^\+?[0-9]{7,15}$').hasMatch(phone)) {
+      _toast('اكتب رقم هاتف صحيحًا من 7 إلى 15 رقمًا');
       return;
     }
     if (_uid == '...' || _uid.trim().isEmpty) {
@@ -55,12 +85,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
       await prefs.setString('uid', _uid);
       await prefs.setString('name', displayName);
       await prefs.setString('username', username);
+      await prefs.setString('phone', phone);
+      if (_photoBase64 != null) await prefs.setString('photoBase64', _photoBase64!);
       await prefs.setBool('show_id', false);
       await FirebaseDatabase.instance.ref('users/$_uid').update({
         'name': displayName,
         'username': username,
+        'phone': phone,
         'showId': false,
         'createdAt': ServerValue.timestamp,
+        if (_photoBase64 != null) 'photoBase64': _photoBase64,
       });
     } catch (e) {
       _toast('تعذر حفظ اليوزر: $e');
@@ -120,6 +154,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       padding: const EdgeInsets.all(20),
                       child: Column(
                         children: [
+                          GestureDetector(
+                            onTap: _pickProfilePhoto,
+                            child: CircleAvatar(
+                              radius: 42,
+                              backgroundColor: const Color(0xFF111111),
+                              backgroundImage: _photoBase64 == null
+                                  ? null
+                                  : MemoryImage(base64Decode(_photoBase64!)),
+                              child: _photoBase64 == null
+                                  ? const Icon(Icons.add_a_photo, color: Colors.white, size: 28)
+                                  : null,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          const Text('صورة الملف الشخصي', textDirection: TextDirection.rtl),
+                          const SizedBox(height: 16),
                           _label('Username'),
                           TextField(
                             controller: _username,
@@ -136,6 +186,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             textInputAction: TextInputAction.done,
                             onSubmitted: (_) => _continue(),
                             decoration: _decoration('اكتب اسمك الذي سيظهر للناس'),
+                          ),
+                          const SizedBox(height: 16),
+                          _label('رقم الهاتف'),
+                          TextField(
+                            controller: _phone,
+                            keyboardType: TextInputType.phone,
+                            textDirection: TextDirection.ltr,
+                            maxLength: 16,
+                            decoration: _decoration('+201xxxxxxxxx'),
                           ),
                           const Align(
                             alignment: Alignment.centerRight,

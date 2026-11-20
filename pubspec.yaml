@@ -25,6 +25,10 @@ dependencies:
   flutter_local_notifications: ^17.2.4
   # خدمة خلفية: إشعارات والتطبيق مقفول (بدون خادم وبدون تكلفة)
   flutter_background_service: ^5.1.0
+  # مكالمات صوت وفيديو عبر WebRTC؛ Firebase يستخدم للإشارة فقط
+  flutter_webrtc: ^1.6.3
+  # قراءة جهات اتصال الهاتف بعد طلب الإذن
+  flutter_contacts: ^1.1.9+2
 dev_dependencies:
   flutter_test:
     sdk: flutter

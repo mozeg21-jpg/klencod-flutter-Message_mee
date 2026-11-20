@@ -10,6 +10,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/notification_service.dart';
+import 'community_features_screen.dart';
+import 'contacts_screen.dart';
+import 'call_screen.dart';
+import '../utils/call_service.dart';
 import '../widgets/message_bubble.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -25,9 +29,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final ImagePicker _picker = ImagePicker();
   final List<Map<String, dynamic>> _messages = [];
   StreamSubscription<DatabaseEvent>? _subscription;
+  StreamSubscription<DatabaseEvent>? _incomingCallSubscription;
+  final Set<String> _shownCalls = {};
   StreamSubscription<RecordingDisposition>? _recordingSubscription;
   Map<String, dynamic>? _reply;
-  String _uid = '', _name = '';
+  String _uid = '', _name = '', _username = '';
   bool _recording = false, _recorderReady = false, _sending = false;
   int _seconds = 0;
   final List<double> _levels = [];
@@ -63,6 +69,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final p = await SharedPreferences.getInstance();
     _uid = p.getString('uid') ?? '';
     _name = p.getString('name') ?? '';
+    _username = p.getString('username') ?? '';
     try {
       await _recorder.openRecorder();
       await _recorder.setSubscriptionDuration(const Duration(milliseconds: 100));
@@ -81,8 +88,39 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (_) {}
     try {
       _subscription = FirebaseDatabase.instance.ref('messages').limitToLast(100).onValue.listen(_readMessages);
+      _incomingCallSubscription = FirebaseDatabase.instance.ref('calls')
+          .orderByChild('targetId').equalTo(_uid).onChildAdded.listen(_incomingCall);
     } catch (_) {}
     if (mounted) setState(() {});
+  }
+
+  Future<void> _incomingCall(DatabaseEvent event) async {
+    final id = event.snapshot.key;
+    final raw = event.snapshot.value;
+    if (id == null || raw is! Map || _shownCalls.contains(id)) return;
+    final data = Map<String, dynamic>.from(raw);
+    if (data['status'] != 'ringing') return;
+    _shownCalls.add(id);
+    if (!mounted) return;
+    final accept = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: Text(data['type'] == 'video' ? 'مكالمة فيديو واردة' : 'مكالمة صوتية واردة'),
+        content: Text('من ${data['callerName'] ?? 'مستخدم'}'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('رفض')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('قبول')),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (accept == true) {
+      await CallService.updateStatus(id, 'accepted');
+      Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(callId: id, uid: _uid, caller: false, type: data['type']?.toString() ?? 'audio')));
+    } else {
+      await CallService.updateStatus(id, 'declined');
+    }
   }
 
   void _readMessages(DatabaseEvent event) {
@@ -142,6 +180,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _subscription?.cancel();
+    _incomingCallSubscription?.cancel();
     _recordingSubscription?.cancel();
     _timer?.cancel();
     _toastTimer?.cancel();
@@ -508,7 +547,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         appBar: AppBar(
           backgroundColor: const Color(0xFFE85C5C),
           title: const Text('Ahmed Saad Community', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-          actions: [IconButton(onPressed: _editProfile, icon: const Icon(Icons.account_circle))],
+          actions: [
+            IconButton(
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen())),
+              icon: const Icon(Icons.contacts_outlined),
+              tooltip: 'جهات الاتصال',
+            ),
+            IconButton(
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CommunityFeaturesScreen())),
+              icon: const Icon(Icons.groups_2_outlined),
+              tooltip: 'الجروبات والحالات',
+            ),
+            IconButton(onPressed: _editProfile, icon: const Icon(Icons.account_circle)),
+          ],
         ),
         body: FadeTransition(
           opacity: CurvedAnimation(parent: _entryController, curve: Curves.easeOut),
@@ -681,25 +732,52 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       );
 
   Future<void> _editProfile() async {
-    final c = TextEditingController(text: _name);
-    final value = await showDialog<String>(
+    final nameController = TextEditingController(text: _name);
+    final usernameController = TextEditingController(text: _username);
+    final save = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Edit name'),
-        content: TextField(controller: c, textDirection: TextDirection.rtl),
+        title: const Text('تعديل الملف الشخصي'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(controller: usernameController, textDirection: TextDirection.ltr, decoration: const InputDecoration(labelText: 'Username (@name)')),
+          TextField(controller: nameController, textDirection: TextDirection.rtl, decoration: const InputDecoration(labelText: 'اسم الظهور')),
+        ]),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, c.text.trim()), child: const Text('Save')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حفظ')),
         ],
       ),
     );
-    if (value == null || value.isEmpty) return;
+    if (save != true) return;
+    final value = nameController.text.trim();
+    final username = usernameController.text.trim().toLowerCase();
+    if (value.length < 2 || !RegExp(r'^@[a-z0-9_]{3,20}$').hasMatch(username)) {
+      _toast('تحقق من اسم الظهور والـ Username');
+      return;
+    }
+    final normalized = username.substring(1);
+    final usernameRef = FirebaseDatabase.instance.ref('usernames/$normalized');
+    final reserved = await usernameRef.runTransaction((current) {
+      if (current == null || current.toString() == _uid) return Transaction.success(_uid);
+      return Transaction.abort();
+    });
+    if (!reserved.committed) {
+      _toast('هذا الـ Username مستخدم بالفعل');
+      return;
+    }
     final p = await SharedPreferences.getInstance();
     await p.setString('name', value);
-    setState(() => _name = value);
+    await p.setString('username', username);
+    setState(() {
+      _name = value;
+      _username = username;
+    });
     try {
-      await FirebaseDatabase.instance.ref('users/$_uid/name').set(value);
+      await FirebaseDatabase.instance.ref('users/$_uid').update({'name': value, 'username': username});
     } catch (_) {}
+    if (mounted) {
+      _toast('تم تحديث الملف الشخصي');
+    }
   }
 }
 
