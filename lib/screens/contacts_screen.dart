@@ -46,7 +46,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('جهات الاتصال'), backgroundColor: const Color(0xFFE85C5C)),
+    appBar: AppBar(title: const Text('جهات الاتصال')),
     body: StreamBuilder<DatabaseEvent>(
       stream: FirebaseDatabase.instance.ref('users').onValue,
       builder: (_, snapshot) {

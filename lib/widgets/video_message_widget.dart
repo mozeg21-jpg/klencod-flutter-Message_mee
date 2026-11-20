@@ -103,7 +103,7 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget> {
     }
     final c = _controller!;
     return GestureDetector(
-      onTap: _toggle,
+      onTap: () => _openViewer(c),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(13),
         child: Container(
@@ -131,6 +131,58 @@ class _VideoMessageWidgetState extends State<VideoMessageWidget> {
                   backgroundColor: Colors.white12,
                 ),
               ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openViewer(VideoPlayerController source) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _VideoViewer(controller: source),
+    ));
+    if (mounted) setState(() {});
+  }
+}
+
+class _VideoViewer extends StatefulWidget {
+  final VideoPlayerController controller;
+  const _VideoViewer({required this.controller});
+
+  @override
+  State<_VideoViewer> createState() => _VideoViewerState();
+}
+
+class _VideoViewerState extends State<_VideoViewer> {
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.controller;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white),
+      body: Center(
+        child: GestureDetector(
+          onTap: () async {
+            if (c.value.isPlaying) {
+              await c.pause();
+            } else {
+              await c.play();
+            }
+            if (mounted) setState(() {});
+          },
+          child: Stack(alignment: Alignment.center, children: [
+            AspectRatio(aspectRatio: c.value.aspectRatio, child: VideoPlayer(c)),
+            if (!c.value.isPlaying)
+              const DecoratedBox(
+                decoration: BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                child: Padding(padding: EdgeInsets.all(14), child: Icon(Icons.play_arrow, color: Colors.white, size: 44)),
+              ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: VideoProgressIndicator(c, allowScrubbing: true, colors: const VideoProgressColors(playedColor: Color(0xFFE85C5C))),
             ),
           ]),
         ),

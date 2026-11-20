@@ -1,11 +1,14 @@
+import 'dart:convert';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'call_screen.dart';
 import '../utils/call_service.dart';
 import 'group_chat_screen.dart';
+import '../widgets/video_message_widget.dart';
 
-/// شاشة الجروبات والحالات. البيانات محفوظة في Realtime Database مثل الرسائل.
+/// شاشة الجروبات والحالات داخل تطبيق المراسلة.
 class CommunityFeaturesScreen extends StatefulWidget {
   const CommunityFeaturesScreen({super.key});
 
@@ -21,6 +24,9 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
   String _uid = '';
   String _name = '';
   String _statusPrivacy = 'all';
+  XFile? _statusMedia;
+  bool _statusVideo = false;
+  final _picker = ImagePicker();
 
   @override
   void initState() {
@@ -65,16 +71,25 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
 
   Future<void> _createStatus() async {
     final text = _statusText.text.trim();
-    if (text.isEmpty || _uid.isEmpty) return;
-    await FirebaseDatabase.instance.ref('statuses').push().set({
+    if (text.isEmpty && _statusMedia == null || _uid.isEmpty) return;
+    final data = <String, dynamic>{
       'text': text,
       'senderId': _uid,
       'senderName': _name,
       'privacy': _statusPrivacy,
       'createdAt': ServerValue.timestamp,
       'expiresAt': DateTime.now().add(const Duration(hours: 24)).millisecondsSinceEpoch,
-    });
+    };
+    if (_statusMedia != null) {
+      final bytes = await _statusMedia!.readAsBytes();
+      if (bytes.length > 6 * 1024 * 1024) return;
+      data['mediaType'] = _statusVideo ? 'video' : 'image';
+      data['mediaBase64'] = base64Encode(bytes);
+    }
+    await FirebaseDatabase.instance.ref('statuses').push().set(data);
     _statusText.clear();
+    _statusMedia = null;
+    _statusVideo = false;
     _statusPrivacy = 'all';
     if (mounted) Navigator.pop(context);
   }
@@ -100,7 +115,7 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
           title: const Text('الجروبات والحالات'),
-          backgroundColor: const Color(0xFFE85C5C),
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           bottom: TabBar(
             controller: _tabs,
             tabs: const [Tab(text: 'الجروبات'), Tab(text: 'الحالة')],
@@ -137,6 +152,16 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
               ),
               ...values.map((group) => Card(
                     child: ListTile(
+                      onTap: () {
+                        final media = status['mediaBase64']?.toString() ?? '';
+                        if (media.isEmpty) return;
+                        showDialog<void>(context: context, builder: (_) => Dialog(
+                          backgroundColor: Colors.black,
+                          child: status['mediaType'] == 'video'
+                              ? VideoMessageWidget(id: 'status_${status['createdAt']}', base64: media, mine: false)
+                              : InteractiveViewer(child: Image.memory(base64Decode(media), fit: BoxFit.contain)),
+                        ));
+                      },
                       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatScreen(groupId: group['id'].toString(), groupName: group['name']?.toString() ?? 'جروب'))),
                       leading: const CircleAvatar(child: Icon(Icons.groups)),
                       title: Text(group['name']?.toString() ?? 'جروب'),
@@ -182,7 +207,12 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
                     child: ListTile(
                       leading: const CircleAvatar(child: Icon(Icons.person)),
                       title: Text(status['senderName']?.toString() ?? ''),
-                      subtitle: Text(status['text']?.toString() ?? ''),
+                      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(status['text']?.toString() ?? ''),
+                        if (status['mediaType'] == 'image' && status['mediaBase64'] != null)
+                          Padding(padding: const EdgeInsets.only(top: 8), child: Image.memory(base64Decode(status['mediaBase64'].toString()), height: 140, width: double.infinity, fit: BoxFit.cover)),
+                        if (status['mediaType'] == 'video') const Padding(padding: EdgeInsets.only(top: 8), child: Icon(Icons.videocam, color: Color(0xFFE85C5C))),
+                      ]),
                     ),
                   )),
             ],
@@ -205,6 +235,11 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
           title: const Text('حالة جديدة'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(controller: _statusText, maxLines: 4, decoration: const InputDecoration(hintText: 'اكتب حالتك')),
+            Row(children: [
+              IconButton(onPressed: () async { final f = await _picker.pickImage(source: ImageSource.gallery); if (f != null) setState(() { _statusMedia = f; _statusVideo = false; }); }, icon: const Icon(Icons.image_outlined)),
+              IconButton(onPressed: () async { final f = await _picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 1)); if (f != null) setState(() { _statusMedia = f; _statusVideo = true; }); }, icon: const Icon(Icons.videocam_outlined)),
+              if (_statusMedia != null) Expanded(child: Text(_statusMedia!.name, overflow: TextOverflow.ellipsis)),
+            ]),
             const SizedBox(height: 12),
             StatefulBuilder(builder: (context, setDialogState) => DropdownButtonFormField<String>(
               value: _statusPrivacy,

@@ -23,10 +23,22 @@ class AhmedSaadCommunityApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
         debugShowCheckedModeBanner: false,
-        title: 'Ahmed Saad Community',
+        title: 'Ahmed Messenger',
+        themeMode: ThemeMode.system,
         theme: ThemeData(
           useMaterial3: true,
-          colorSchemeSeed: const Color(0xFFE85C5C),
+          brightness: Brightness.light,
+          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF25D366), brightness: Brightness.light),
+          scaffoldBackgroundColor: const Color(0xFFF7F7F7),
+          appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF075E54), foregroundColor: Colors.white),
+        ),
+        darkTheme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFE53935), brightness: Brightness.dark),
+          scaffoldBackgroundColor: Colors.black,
+          appBarTheme: const AppBarTheme(backgroundColor: Colors.black, foregroundColor: Color(0xFFE53935)),
+          cardColor: const Color(0xFF151515),
         ),
         home: const SplashScreen(),
       );

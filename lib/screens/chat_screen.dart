@@ -543,10 +543,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFFFFF8F8),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
-          backgroundColor: const Color(0xFFE85C5C),
-          title: const Text('Ahmed Saad Community', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
+          title: const Text('المحادثات', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
           actions: [
             IconButton(
               onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen())),

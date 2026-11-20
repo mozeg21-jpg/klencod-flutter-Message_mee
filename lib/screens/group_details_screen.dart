@@ -7,7 +7,7 @@ class GroupDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('تفاصيل الجروب'), backgroundColor: const Color(0xFFE85C5C)),
+        appBar: AppBar(title: const Text('تفاصيل الجروب')),
         body: FutureBuilder<DataSnapshot>(
           future: FirebaseDatabase.instance.ref('groups/$groupId').get(),
           builder: (context, snapshot) {
