@@ -152,16 +152,6 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
               ),
               ...values.map((group) => Card(
                     child: ListTile(
-                      onTap: () {
-                        final media = status['mediaBase64']?.toString() ?? '';
-                        if (media.isEmpty) return;
-                        showDialog<void>(context: context, builder: (_) => Dialog(
-                          backgroundColor: Colors.black,
-                          child: status['mediaType'] == 'video'
-                              ? VideoMessageWidget(id: 'status_${status['createdAt']}', base64: media, mine: false)
-                              : InteractiveViewer(child: Image.memory(base64Decode(media), fit: BoxFit.contain)),
-                        ));
-                      },
                       onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => GroupChatScreen(groupId: group['id'].toString(), groupName: group['name']?.toString() ?? 'جروب'))),
                       leading: const CircleAvatar(child: Icon(Icons.groups)),
                       title: Text(group['name']?.toString() ?? 'جروب'),
@@ -205,6 +195,16 @@ class _CommunityFeaturesScreenState extends State<CommunityFeaturesScreen>
               ),
               ...values.reversed.map((status) => Card(
                     child: ListTile(
+                      onTap: () {
+                        final media = status['mediaBase64']?.toString() ?? '';
+                        if (media.isEmpty) return;
+                        showDialog<void>(context: context, builder: (_) => Dialog(
+                          backgroundColor: Colors.black,
+                          child: status['mediaType'] == 'video'
+                              ? VideoMessageWidget(id: 'status_${status['createdAt']}', base64: media, mine: false)
+                              : InteractiveViewer(child: Image.memory(base64Decode(media), fit: BoxFit.contain)),
+                        ));
+                      },
                       leading: const CircleAvatar(child: Icon(Icons.person)),
                       title: Text(status['senderName']?.toString() ?? ''),
                       subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
