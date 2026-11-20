@@ -153,13 +153,20 @@ class _GroupChatScreenState extends State<GroupChatScreen> {
           ]),
         ));
       })),
-      SafeArea(child: Padding(padding: const EdgeInsets.all(6), child: Row(children: [
-        IconButton(onPressed: () => _pickMedia(false), icon: const Icon(Icons.image_outlined, color: Color(0xFFE85C5C))),
-        IconButton(onPressed: () => _pickMedia(true), icon: const Icon(Icons.videocam_outlined, color: Color(0xFFE85C5C))),
-        IconButton(onPressed: _toggleRecording, icon: Icon(_recording ? Icons.stop_circle : Icons.mic, color: const Color(0xFFE85C5C))),
-        Expanded(child: TextField(controller: _input, textDirection: TextDirection.rtl, decoration: const InputDecoration(hintText: 'اكتب رسالة...', border: OutlineInputBorder()))),
-        IconButton(onPressed: _send, icon: const Icon(Icons.send, color: Color(0xFFE85C5C))),
-      ])),
+      SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Row(
+            children: [
+              IconButton(onPressed: () => _pickMedia(false), icon: const Icon(Icons.image_outlined, color: Color(0xFFE85C5C))),
+              IconButton(onPressed: () => _pickMedia(true), icon: const Icon(Icons.videocam_outlined, color: Color(0xFFE85C5C))),
+              IconButton(onPressed: _toggleRecording, icon: Icon(_recording ? Icons.stop_circle : Icons.mic, color: const Color(0xFFE85C5C))),
+              Expanded(child: TextField(controller: _input, textDirection: TextDirection.rtl, decoration: const InputDecoration(hintText: 'اكتب رسالة...', border: OutlineInputBorder()))),
+              IconButton(onPressed: _send, icon: const Icon(Icons.send, color: Color(0xFFE85C5C))),
+            ],
+          ),
+        ),
+      ),
     ]),
   );
 }
