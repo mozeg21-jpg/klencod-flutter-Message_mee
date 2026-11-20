@@ -8,6 +8,7 @@ import '../utils/call_service.dart';
 import 'group_chat_screen.dart';
 import '../widgets/video_message_widget.dart';
 import 'status_viewer_screen.dart';
+import 'channels_screen.dart';
 
 /// شاشة الحالات والجروبات داخل تطبيق المراسلة، بدون قسم مجتمع مستقل.
 class MessengerFeaturesScreen extends StatefulWidget {
@@ -32,7 +33,7 @@ class _MessengerFeaturesScreenState extends State<MessengerFeaturesScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 2, vsync: this);
+    _tabs = TabController(length: 3, vsync: this);
     _loadProfile();
   }
 
@@ -120,12 +121,12 @@ class _MessengerFeaturesScreenState extends State<MessengerFeaturesScreen>
           backgroundColor: Theme.of(context).appBarTheme.backgroundColor,
           bottom: TabBar(
             controller: _tabs,
-            tabs: const [Tab(text: 'الجروبات'), Tab(text: 'الحالة')],
+            tabs: const [Tab(text: 'الحالة'), Tab(text: 'القنوات'), Tab(text: 'الجروبات')],
           ),
         ),
         body: TabBarView(
           controller: _tabs,
-          children: [_groups(), _statuses()],
+          children: [_statuses(), ChannelsScreen(uid: _uid, name: _name), _groups()],
         ),
       );
 
@@ -200,6 +201,18 @@ class _MessengerFeaturesScreenState extends State<MessengerFeaturesScreen>
                 icon: const Icon(Icons.add_circle_outline),
                 label: const Text('إضافة حالة'),
               ),
+              const Align(alignment: AlignmentDirectional.centerStart, child: Padding(padding: EdgeInsets.only(top: 14, bottom: 6), child: Text('الحالة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
+              SizedBox(
+                height: 112,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _myStatusTile(),
+                    ...values.where((status) => status['senderId']?.toString() != _uid).map(_statusCircle),
+                  ],
+                ),
+              ),
+              if (values.isNotEmpty) const Align(alignment: AlignmentDirectional.centerStart, child: Padding(padding: EdgeInsets.only(top: 10, bottom: 4), child: Text('التحديثات الأخيرة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)))),
               ...values.reversed.map((status) => TweenAnimationBuilder<double>(
                     tween: Tween(begin: 0, end: 1),
                     duration: const Duration(milliseconds: 320),
@@ -227,8 +240,43 @@ class _MessengerFeaturesScreenState extends State<MessengerFeaturesScreen>
                   )),
             ],
           );
-        },
+      },
+    );
+
+  Widget _myStatusTile() => GestureDetector(
+        onTap: _showCreateStatus,
+        child: Container(
+          width: 78,
+          margin: const EdgeInsetsDirectional.only(end: 10),
+          child: Column(children: [
+            Stack(children: [
+              const CircleAvatar(radius: 31, child: Icon(Icons.person, size: 30)),
+              Positioned(bottom: 0, right: 0, child: Container(decoration: BoxDecoration(color: const Color(0xFF25D366), shape: BoxShape.circle, border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2)), child: const Icon(Icons.add, color: Colors.white, size: 18))),
+            ]),
+            const SizedBox(height: 5),
+            const Text('حالتي', maxLines: 1, overflow: TextOverflow.ellipsis),
+          ]),
+        ),
       );
+
+  Widget _statusCircle(Map<String, dynamic> status) {
+    final ordered = <Map<String, dynamic>>[];
+    return GestureDetector(
+      onTap: () {
+        ordered.addAll([status]);
+        Navigator.push(context, PageRouteBuilder(pageBuilder: (_, __, ___) => StatusViewerScreen(statuses: ordered, initialIndex: 0), transitionsBuilder: (_, animation, __, child) => FadeTransition(opacity: animation, child: child)));
+      },
+      child: Container(
+        width: 78,
+        margin: const EdgeInsetsDirectional.only(end: 10),
+        child: Column(children: [
+          Container(padding: const EdgeInsets.all(3), decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF25D366)), child: CircleAvatar(radius: 28, backgroundColor: Colors.white, child: Text((status['senderName']?.toString() ?? 'م').characters.first))),
+          const SizedBox(height: 5),
+          Text(status['senderName']?.toString() ?? 'مستخدم', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ]),
+      ),
+    );
+  }
 
   void _showCreateGroup() => showDialog<void>(
         context: context,

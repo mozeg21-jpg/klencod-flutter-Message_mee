@@ -5,6 +5,7 @@ import '../utils/firebase_paths.dart';
 import 'chat_screen.dart';
 import 'contacts_screen.dart';
 import 'settings_screen.dart';
+import 'broadcast_screen.dart';
 
 class ChatsListScreen extends StatefulWidget {
   const ChatsListScreen({super.key});
@@ -60,8 +61,15 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           actions: [
             IconButton(onPressed: () => setState(() { _searching = !_searching; if (!_searching) _query = ''; }), icon: Icon(_searching ? Icons.close : Icons.search)),
             PopupMenuButton<String>(
-              onSelected: (value) => setState(() => _filter = value),
+              onSelected: (value) {
+                if (value == 'broadcast') {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const BroadcastScreen()));
+                } else {
+                  setState(() => _filter = value);
+                }
+              },
               itemBuilder: (_) => const [
+                PopupMenuItem(value: 'broadcast', child: Text('رسالة جماعية جديدة')),
                 PopupMenuItem(value: 'all', child: Text('الكل')),
                 PopupMenuItem(value: 'unread', child: Text('غير مقروءة')),
                 PopupMenuItem(value: 'favorites', child: Text('المفضلة')),
@@ -73,7 +81,10 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
         ),
         body: _uid.isEmpty
             ? const Center(child: CircularProgressIndicator())
-            : StreamBuilder<DatabaseEvent>(
+            : Column(
+                children: [
+                  _filterBar(),
+                  Expanded(child: StreamBuilder<DatabaseEvent>(
                 stream: FirebaseDatabase.instance.ref(FirebasePaths.userChats(_uid)).onValue,
                 builder: (context, snapshot) {
                   final rows = <Map<String, dynamic>>[];
@@ -118,7 +129,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                             leading: CircleAvatar(child: Text((row['name']?.toString() ?? 'م').characters.first)),
                             title: Text(row['name']?.toString() ?? 'محادثة'),
                             subtitle: Text(row['lastMessage']?.toString() ?? ''),
-                            trailing: (row['unread'] as num? ?? 0) > 0 ? CircleAvatar(radius: 12, child: Text('${row['unread']}')) : null,
+                            trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                              if (row['pinned'] == true) const Icon(Icons.push_pin, size: 15, color: Color(0xFF667781)),
+                              Text(_timeLabel(row['updatedAt']), style: const TextStyle(fontSize: 11, color: Color(0xFF667781))),
+                              if ((row['unread'] as num? ?? 0) > 0) CircleAvatar(radius: 10, backgroundColor: const Color(0xFF25D366), child: Text('${row['unread']}', style: const TextStyle(fontSize: 11, color: Colors.white))),
+                            ]),
                             onLongPress: () => _showChatActions(row),
                             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversationId: row['id'].toString(), peerId: row['peerId']?.toString(), peerName: row['name']?.toString()))),
                           ),
@@ -127,7 +142,38 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                     ),
                   );
                 },
+                  )),
+                ],
               ),
         floatingActionButton: FloatingActionButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ContactsScreen())), child: const Icon(Icons.chat)),
       );
+
+  Widget _filterBar() => SizedBox(
+        height: 52,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          children: [
+            ['all', 'الكل'],
+            ['unread', 'غير مقروءة'],
+            ['favorites', 'المفضلة'],
+            ['groups', 'الجروبات'],
+          ].map((item) => Padding(
+            padding: const EdgeInsetsDirectional.only(end: 8),
+            child: ChoiceChip(
+              label: Text(item[1]),
+              selected: _filter == item[0],
+              selectedColor: const Color(0xFFD9FDD3),
+              onSelected: (_) => setState(() => _filter = item[0]),
+            ),
+          )).toList(),
+        ),
+      );
+
+  String _timeLabel(dynamic value) {
+    final milliseconds = value is num ? value.toInt() : 0;
+    if (milliseconds <= 0) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(milliseconds);
+    return '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+  }
 }

@@ -31,8 +31,11 @@ class MessageBubble extends StatelessWidget {
     final mediaType = (message['mediaType'] ?? '').toString();
     final mediaBase64 = (message['mediaBase64'] ?? '').toString();
     // رسائلي شمال، ورسائل باقي أعضاء الجروب يمين.
-    final bg = mine ? const Color(0xFF128C7E) : Colors.white;
-    final textColor = mine ? Colors.white : const Color(0xFF111111);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = mine
+        ? (isDark ? const Color(0xFF005C4B) : const Color(0xFFDCF8C6))
+        : (isDark ? const Color(0xFF202C33) : Colors.white);
+    final textColor = isDark || mine ? const Color(0xFFE9EDEF) : const Color(0xFF111B21);
     final time = DateTime.fromMillisecondsSinceEpoch(
         (message['time'] is num ? (message['time'] as num).toInt() : DateTime.now().millisecondsSinceEpoch));
 
@@ -100,7 +103,7 @@ class MessageBubble extends StatelessWidget {
         onLongPress: onLongPress,
         onSwipeLeft: onSwipeLeft,
         child: Align(
-          alignment: mine ? Alignment.centerLeft : Alignment.centerRight,
+          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             padding: content is _ImageMessage || content is VideoMessageWidget
@@ -120,7 +123,7 @@ class MessageBubble extends StatelessWidget {
                       topRight: Radius.circular(16),
                       bottomLeft: Radius.circular(16),
                       bottomRight: Radius.circular(5)),
-              border: mine ? null : Border.all(color: const Color(0xFFF3C9C9)),
+              border: mine || isDark ? null : Border.all(color: const Color(0xFFE5E7E9)),
               boxShadow: const [BoxShadow(color: Color(0x12000000), blurRadius: 5, offset: Offset(0, 2))],
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -364,7 +367,9 @@ class _ImageMessageState extends State<_ImageMessage> {
   void initState() {
     super.initState();
     try {
-      _bytes = base64Decode(widget.base64);
+      var encoded = widget.base64.trim();
+      if (encoded.contains(',')) encoded = encoded.split(',').last;
+      _bytes = base64Decode(encoded);
     } catch (_) {
       _failed = true;
     }

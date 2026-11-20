@@ -329,6 +329,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         if (key != _uid) await ref.child(_uid).remove();
       } else {
         await ref.child(key).set(emoji);
+        // Remove the old raw-UID entry when upgrading legacy reactions;
+        // otherwise one user would be counted twice in the reaction total.
+        if (key != _uid) await ref.child(_uid).remove();
       }
     } catch (e) {
       _toast('تعذر تعديل التفاعل: ${_shortError(e)}');
@@ -340,6 +343,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     if (id == null || id.isEmpty) return;
     try {
       await _messagesRef.child(id).update({field: value});
+      if (field == 'starred' && _uid.isNotEmpty && widget.conversationId != null && widget.conversationId!.isNotEmpty) {
+        final indexRef = FirebaseDatabase.instance.ref('starredMessages/${FirebasePaths.safeSegment(_uid)}/${FirebasePaths.safeSegment(widget.conversationId!)}/${FirebasePaths.safeSegment(id)}');
+        if (value == true) {
+          await indexRef.set({...Map<String, dynamic>.from(message), 'starred': true, 'conversationId': widget.conversationId});
+        } else {
+          await indexRef.remove();
+        }
+      }
     } catch (e) {
       _toast('تعذر تحديث الرسالة: ${_shortError(e)}');
     }
@@ -348,7 +359,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _votePoll(Map<String, dynamic> message, String option) async {
     final id = message['id']?.toString();
     if (id == null || id.isEmpty || _uid.isEmpty) return;
-    await _messagesRef.child('$id/votes/${FirebasePaths.safeSegment(_uid)}').set(option);
+    try {
+      await _messagesRef.child('$id/votes/${FirebasePaths.safeSegment(_uid)}').set(option);
+    } catch (e) {
+      _toast('تعذر تسجيل التصويت: ${_shortError(e)}');
+    }
   }
 
   Future<void> _forwardMessage(Map<String, dynamic> message) async {
@@ -822,7 +837,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           child: SlideTransition(
             position: Tween<Offset>(begin: const Offset(0, .04), end: Offset.zero)
                 .animate(CurvedAnimation(parent: _entryController, curve: Curves.easeOutCubic)),
-            child: Column(children: [
+            child: Container(
+              color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF0B141A) : const Color(0xFFECE5DD),
+              child: Column(children: [
               Expanded(
                 child: ListView.builder(
                   controller: _scroll,
@@ -859,7 +876,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ),
                 ),
               if (_recording) _recordingBar() else _inputBar(),
-            ]),
+              ]),
+            ),
           ),
         ),
       );
@@ -867,7 +885,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Widget _inputBar() => SafeArea(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-          decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)]),
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF202C33) : Colors.white,
+            boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+          ),
           child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             _circleAction(Icons.emoji_emotions_outlined, _showEmojiPanel),
             _circleAction(Icons.attach_file, _sending ? null : _showAttachmentMenu),
@@ -887,7 +908,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   isDense: true,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   filled: true,
-                  fillColor: const Color(0xFFF5F5F5),
+                  fillColor: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF2A3942) : const Color(0xFFF5F5F5),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
                 ),
               ),

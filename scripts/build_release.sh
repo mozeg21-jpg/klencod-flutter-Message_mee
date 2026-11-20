@@ -2,7 +2,7 @@
 # ============================================================
 # بناء نسخة تثبيت موقّعة تلقائيًا بضغطة واحدة (لينكس / ماك)
 # الاستخدام:  ./scripts/build_release.sh
-# الناتج:     build/app/outputs/flutter-apk/app-release.apk
+# الناتج:     build/app/outputs/flutter-apk/app-*-release.apk
 # ============================================================
 set -e
 cd "$(dirname "$0")/.."
@@ -25,9 +25,13 @@ fi
 echo "🎨 3/4) توليد أيقونة التطبيق..."
 dart run flutter_launcher_icons
 
-echo "📦 4/4) بناء نسخة الإفراج الموقّعة..."
-flutter build apk --release
+echo "📦 4/4) بناء نسخ صغيرة ومموّهة حسب معمارية الجهاز..."
+mkdir -p build/symbols
+flutter build apk --release \
+  --split-per-abi \
+  --obfuscate \
+  --split-debug-info=build/symbols
 
 echo ""
 echo "✅ تم البناء بنجاح. ملف التثبيت الموقّع:"
-echo "   build/app/outputs/flutter-apk/app-release.apk"
+echo "   build/app/outputs/flutter-apk/app-*-release.apk"

@@ -14,16 +14,20 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _phone = TextEditingController();
+  final _displayName = TextEditingController();
+  final _username = TextEditingController();
   final _picker = ImagePicker();
   String _uid = '...';
+  String _phoneValue = '';
   String? _photoBase64;
+  int _step = 0;
   bool _busy = false;
 
   @override
   void initState() { super.initState(); _loadUid(); }
   Future<void> _loadUid() async { try { final id = await DeviceUid.get(); if (mounted) setState(() => _uid = id); } catch (_) {} }
   @override
-  void dispose() { _phone.dispose(); super.dispose(); }
+  void dispose() { _phone.dispose(); _displayName.dispose(); _username.dispose(); super.dispose(); }
 
   Future<void> _pickProfilePhoto() async {
     try {
@@ -55,25 +59,48 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _toast('انتظر لحظة حتى يجهز معرف الجهاز');
       return;
     }
+    if (_step == 0) {
+      setState(() {
+        _phoneValue = phone;
+        _step = 1;
+      });
+      return;
+    }
+    final displayName = _displayName.text.trim();
+    if (displayName.length < 2) {
+      _toast('اكتب اسمك، الاسم إجباري');
+      return;
+    }
+    final username = _username.text.trim().toLowerCase();
+    if (!RegExp(r'^@[a-z0-9_]{3,24}$').hasMatch(username)) {
+      _toast('اكتب يوزر يبدأ بـ @ ويحتوي حروفًا وأرقامًا و _ فقط');
+      return;
+    }
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final generatedUsername = '@u_${_uid.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_')}';
+      final usernameRef = FirebaseDatabase.instance.ref('usernames/${FirebasePaths.safeSegment(username)}');
+      final usernameSnapshot = await usernameRef.get();
+      if (usernameSnapshot.exists && usernameSnapshot.value.toString() != _uid) {
+        _toast('اسم المستخدم مستخدم بالفعل');
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', _uid);
-      await prefs.setString('name', phone);
-      await prefs.setString('username', generatedUsername);
+      await prefs.setString('name', displayName);
+      await prefs.setString('username', username);
       await prefs.setString('phone', phone);
       if (_photoBase64 != null) await prefs.setString('photoBase64', _photoBase64!);
       await prefs.setBool('show_id', false);
       await FirebaseDatabase.instance.ref(FirebasePaths.user(_uid)).update({
-        'name': phone,
-        'username': generatedUsername,
+        'name': displayName,
+        'username': username,
         'phone': phone,
         'showId': false,
         'createdAt': ServerValue.timestamp,
         if (_photoBase64 != null) 'photoBase64': _photoBase64,
       });
+      await usernameRef.set(_uid);
     } catch (e) {
       _toast('تعذر حفظ بيانات الحساب: $e');
       return;
@@ -114,8 +141,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                       const SizedBox(height: 18),
-                      const Text(
-                        'Welcome to Ahmed Messenger',
+                      Text(
+                        _step == 0 ? 'Welcome to Ahmed Messenger' : 'جهّز ملفك الشخصي',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: Color(0xFF111111), fontSize: 24, fontWeight: FontWeight.bold),
                       ),
@@ -132,7 +159,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       padding: const EdgeInsets.all(20),
                       child: Column(
                         children: [
-                          GestureDetector(
+                          if (_step == 1) ...[
+                            GestureDetector(
                             onTap: _pickProfilePhoto,
                             child: CircleAvatar(
                               radius: 42,
@@ -144,11 +172,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ? const Icon(Icons.add_a_photo, color: Colors.white, size: 28)
                                   : null,
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          const Text('صورة الملف الشخصي', textDirection: TextDirection.rtl),
-                          const SizedBox(height: 16),
-                          _label('رقم الهاتف'),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text('صورة الملف الشخصي (اختياري)', textDirection: TextDirection.rtl),
+                            const SizedBox(height: 16),
+                            _label('اسمك'),
+                            TextField(
+                              controller: _displayName,
+                              textDirection: TextDirection.rtl,
+                              textCapitalization: TextCapitalization.words,
+                              maxLength: 50,
+                              decoration: _decoration('اكتب اسمك'),
+                            ),
+                            const SizedBox(height: 8),
+                            _label('اسم المستخدم'),
+                            TextField(
+                              controller: _username,
+                              textDirection: TextDirection.ltr,
+                              maxLength: 25,
+                              decoration: _decoration('@username'),
+                            ),
+                            const Align(
+                              alignment: Alignment.centerRight,
+                              child: Text('يبدأ بـ @ ومسموح بالحروف والأرقام و _ فقط', textDirection: TextDirection.rtl, style: TextStyle(color: Color(0xFF667781), fontSize: 12)),
+                            ),
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text('رقم الهاتف: $_phoneValue', textDirection: TextDirection.ltr, style: const TextStyle(color: Color(0xFF667781))),
+                            ),
+                          ] else ...[
+                            _label('رقم الهاتف'),
                           TextField(
                             controller: _phone,
                             keyboardType: TextInputType.phone,
@@ -156,14 +210,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             maxLength: 16,
                             decoration: _decoration('+201xxxxxxxxx'),
                           ),
-                          const Align(
+                            const Align(
                             alignment: Alignment.centerRight,
                             child: Text(
                               'اكتب رقم الهاتف فقط، بدون OTP أو رسالة SMS',
                               textDirection: TextDirection.rtl,
                               style: TextStyle(color: Color(0xFF9A8A8A), fontSize: 12),
                             ),
-                          ),
+                            ),
+                          ],
                           const SizedBox(height: 22),
                           SizedBox(
                             width: double.infinity,
@@ -175,7 +230,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
                               ),
-                              child: Text(_busy ? 'جاري الدخول...' : 'دخول مباشر'),
+                              child: Text(_busy ? 'جاري الحفظ...' : (_step == 0 ? 'التالي' : 'بدء استخدام Messenger')),
                             ),
                           ),
                         ],
